@@ -1,0 +1,20 @@
+[package]
+name = "core-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# UUID 生成
+uuid = { version = "1.10", features = ["v4", "serde"] }
+# 日志
+tracing = "0.1"
+# 错误处理
+thiserror = "1.0"
+# 时间处理
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

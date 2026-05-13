@@ -1,0 +1,3 @@
+analyzer:
+  exclude:
+    - lib/src/rust/frb_generated.web.dart

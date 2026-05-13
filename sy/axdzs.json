@@ -1,0 +1,43 @@
+[
+  {
+    "bookSourceGroup": "小说",
+    "bookSourceName": "爱下电子书",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://ixdzs8.com",
+    "customOrder": 5,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "玄幻::/sort/1/index-0-0-1-{{page}}.html\n武侠::/sort/10/index-0-0-1-{{page}}.html\n修真::/sort/2/index-0-0-1-{{page}}.html\n修真::/sort/3/index-0-0-1-{{page}}.html\n灵异::/sort/6/index-0-0-1-{{page}}.html\n日榜::/hot/day/?page={{page}}\n周榜::/hot/month/?page={{page}}\n总榜::/hot/?page={{page}}",
+    "lastUpdateTime": 1766785057524,
+    "respondTime": 180000,
+    "ruleBookInfo": {
+      "downloadUrls": ".btn-solid@tag.a@href",
+      "intro": "爱下电子书\n书名:《{{@class.n-text[0]@tag.h1@text}}》\n作者:{{@class.bauthor[0]@text}}\n{{@class.trend@text}}\n简介:{{@id.intro@text## 　　##\n}}",
+      "kind": ".tags@tag.a@text"
+    },
+    "ruleContent": {
+      "content": "@js:\nvar token = src.match(/token\\s*=\\s*\"([^\"]+)\"/)?.[1];\nvar tourl = baseUrl + \"?challenge=\" + encodeURIComponent(token);\nvar sectionHtml = java.ajax(tourl).match(/<section>\\s*((?:<p>.*?<\\/p>\\s*)+)(.*?)\\s*<\\/section>/i)[1];\nvar text = sectionHtml.replace(new RegExp('<\\\\/?p>', 'g'), '\\n').trim();\ntext;"
+    },
+    "ruleSearch": {
+      "author": ".bauthor@tag.a@text",
+      "bookList": ".u-list@tag.li",
+      "bookUrl": "a@href",
+      "checkKeyWord": "洪荒之龙族称霸",
+      "coverUrl": "img@src\n@js:\nif (result == \"https://img22.ixdzs.com/nopic2.jpg\"){\n\tnull;\n\t}else{result}",
+      "intro": ".l-p2@text",
+      "kind": ".lz@text",
+      "lastChapter": ".l-chapter@text",
+      "name": "a@title",
+      "wordCount": ".size@text"
+    },
+    "ruleToc": {
+      "chapterList": "@js:\nvar bid = baseUrl.match(/read\\/(\\d+)/)[1];\nvar resp = java.post(source.getKey()+\"/novel/clist/\",\"bid=\"+bid,{});\nvar json = JSON.parse(resp.body()).data;\nvar page = 0;\nvar n = \"\";\nfor(var i=json.length - 1; i >= 0; i--){\n\tif(json[i].ctype === \"1\"){\n\t\tn = json[i].title;\n\t\tjson.splice(i, 1);\n\t\tcontinue;\n\t\t}\n\tpage = json[i][\"ordernum\"];\n\tjson[i][\"url\"] = source.getKey() + \"/read/\" + bid + \"/p\" + page + \".html\";\n\tjson[i][\"n\"] = n;\n\t}\njson;",
+      "chapterName": "title",
+      "chapterUrl": "url",
+      "updateTime": "n"
+    },
+    "searchUrl": "/bsearch?q={{key}}&page={{page}}",
+    "weight": 0
+  }
+]

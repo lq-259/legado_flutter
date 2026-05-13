@@ -1,0 +1,60 @@
+[package]
+name = "core-source"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# HTML 解析
+scraper = "0.20"
+# 正则
+regex = "1.11"
+# XML 解析
+quick-xml = { version = "0.37", features = ["serialize"] }
+# 脚本引擎
+rhai = { version = "1.20", features = ["sync", "serde"] }
+# HTTP 客户端（用于请求书源）
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls", "blocking", "socks"] }
+# JavaScript 引擎（用于执行 Legado @js: / <js> / {{JS}} 规则）
+rquickjs = { version = "0.8", optional = true }
+boa_engine = { version = "0.21", optional = true }
+# 日志
+tracing = "0.1"
+# 异步支持
+tokio = { version = "1", features = ["full"] }
+# 编码处理
+encoding_rs = "0.8"
+# URL 解析和编码
+url = "2.5"
+urlencoding = "2.1"
+base64 = "0.22"
+md5 = "0.7"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+ecb = { version = "0.1", features = ["alloc"] }
+block-padding = "0.3"
+zip = { version = "0.6", default-features = false }
+# UUID 生成
+uuid = { version = "1.10", features = ["v4", "serde"] }
+# 时间处理
+chrono = "0.4"
+# XPath 引擎
+sxd-document = "0.3"
+sxd-xpath = "0.4"
+# JSONPath 引擎
+jsonpath_lib = "0.3"
+# TTF 字体解析 (用于字体反爬)
+ttf-parser = "0.25"
+# SQLite (用于缓存持久化)
+rusqlite = { version = "0.31", features = ["bundled"] }
+core-storage = { path = "../core-storage" }
+
+[features]
+default = ["js-quickjs"]
+js-quickjs = ["dep:rquickjs"]
+js-boa = ["dep:boa_engine"]
+
+[dev-dependencies]
+httpmock = "0.7"
+tempfile = "3"

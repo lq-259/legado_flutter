@@ -1,0 +1,57 @@
+name: legado_flutter
+description: Legado Flutter - 基于Flutter+Rust重构的开源阅读应用
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # 状态管理 - Riverpod 2.x提供类型安全的状态管理，编译期检查依赖关系
+  flutter_riverpod: ^2.4.0
+  
+  # 路由管理 - go_router提供声明式路由和深度链接支持
+  go_router: ^14.0.0
+  
+  # FFI桥接 - flutter_rust_bridge自动生成Dart与Rust的绑定代码
+  flutter_rust_bridge: ^2.0.0
+  
+  # 应用目录获取 - path_provider提供跨平台的应用文档/缓存目录路径
+  path_provider: ^2.1.0
+  
+  # 不可变数据模型 - freezed_annotation配合代码生成创建联合类型和数据类
+  freezed_annotation: ^2.4.0
+
+  # 本地通知 - 显示下载进度等后台通知
+  flutter_local_notifications: ^18.0.0
+
+  # 封面缓存 - 网络图片下载到本地磁盘并缓存
+  cached_network_image: ^3.4.0
+  crypto: ^3.0.3
+  dio: ^5.0.0
+  webview_flutter: ^4.8.0
+  file_picker: ^11.0.2
+  flutter_tts: ^4.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  
+  # 代码生成器 - build_runner驱动freezed和flutter_rust_bridge代码生成
+  build_runner: ^2.4.0
+  
+  # 数据模型生成器 - freezed自动生成copyWith、toString等方法
+  freezed: ^2.4.0
+
+flutter:
+  uses-material-design: true
+  
+  # 资源文件目录
+  assets:
+    - assets/images/
+    - assets/fonts/
+    - assets/data/

@@ -1,0 +1,19 @@
+[package]
+name = "core-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scraper = "0.20"
+quick-xml = { version = "0.37", features = ["serialize"] }
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+encoding_rs = "0.8"
+# EPUB 处理
+zip = { version = "0.6", default-features = false }
+# 日志
+tracing = "0.1"
+# 通用类型
+serde_json = "1.0"
+# zlib 解压 (UMD)
+flate2 = "1.0"

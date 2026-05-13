@@ -1,0 +1,3 @@
+[workspace]
+members = ["core-net", "core-parser", "core-storage", "core-source", "bridge", "api-server"]
+resolver = "2"

@@ -1,0 +1,3 @@
+rust_input: crate::api
+rust_root: core/bridge/
+dart_output: flutter_app/lib/src/rust
