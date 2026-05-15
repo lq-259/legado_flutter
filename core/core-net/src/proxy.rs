@@ -57,7 +57,10 @@ impl ProxyConfig {
             (Some(user), Some(pass)) => {
                 let user_encoded = urlencoding::encode(user);
                 let pass_encoded = urlencoding::encode(pass);
-                format!("{}://{}:{}@{}:{}", self.proxy_type, user_encoded, pass_encoded, self.host, self.port)
+                format!(
+                    "{}://{}:{}@{}:{}",
+                    self.proxy_type, user_encoded, pass_encoded, self.host, self.port
+                )
             }
             _ => format!("{}://{}:{}", self.proxy_type, self.host, self.port),
         }
@@ -109,12 +112,19 @@ impl ProxyManager {
     }
 
     pub fn set_default_proxy(&mut self, config: ProxyConfig) {
-        debug!("Set default proxy: {}", redact_proxy_credentials(&config.to_url()));
+        debug!(
+            "Set default proxy: {}",
+            redact_proxy_credentials(&config.to_url())
+        );
         self.default_proxy = Some(config);
     }
 
     pub fn set_proxy_for_source(&mut self, source_id: &str, config: ProxyConfig) {
-        debug!("Set proxy for source {}: {}", source_id, redact_proxy_credentials(&config.to_url()));
+        debug!(
+            "Set proxy for source {}: {}",
+            source_id,
+            redact_proxy_credentials(&config.to_url())
+        );
         self.proxies.insert(source_id.to_string(), config);
     }
 
@@ -162,9 +172,12 @@ mod tests {
         let config = ProxyConfig::new(ProxyType::Socks5, "127.0.0.1", 1080);
         assert_eq!(config.to_url(), "socks5://127.0.0.1:1080");
 
-        let config_with_auth = ProxyConfig::new(ProxyType::Http, "proxy.example.com", 8080)
-            .with_auth("user", "pass");
-        assert_eq!(config_with_auth.to_url(), "http://user:pass@proxy.example.com:8080");
+        let config_with_auth =
+            ProxyConfig::new(ProxyType::Http, "proxy.example.com", 8080).with_auth("user", "pass");
+        assert_eq!(
+            config_with_auth.to_url(),
+            "http://user:pass@proxy.example.com:8080"
+        );
     }
 
     #[test]
@@ -174,7 +187,8 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 1080);
 
-        let config_with_auth = ProxyConfig::from_url("http://user:pass@proxy.example.com:8080").unwrap();
+        let config_with_auth =
+            ProxyConfig::from_url("http://user:pass@proxy.example.com:8080").unwrap();
         assert_eq!(config_with_auth.username, Some("user".to_string()));
         assert_eq!(config_with_auth.password, Some("pass".to_string()));
     }

@@ -12,11 +12,11 @@
 //!
 //! 对应 Legado 的 AnalyzeRule.kt
 
-use super::selector;
-use super::regex_rule;
-use super::value::LegadoValue;
 use super::context::RuleContext;
 use super::js_runtime::{self, JsRuntime};
+use super::regex_rule;
+use super::selector;
+use super::value::LegadoValue;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -179,7 +179,12 @@ pub fn execute_legado_rule_values_with_http_state(
             .or_else(|| rule_str.strip_prefix("js:"))
             .unwrap_or(rule_str);
         let vars = js_runtime::build_runtime_vars(context, html);
-        return match js_runtime::eval_default_with_http_state(script, &vars, cookie_jar, default_headers)? {
+        return match js_runtime::eval_default_with_http_state(
+            script,
+            &vars,
+            cookie_jar,
+            default_headers,
+        )? {
             LegadoValue::Null => Ok(vec![]),
             LegadoValue::Array(values) => Ok(values),
             other => Ok(vec![other]),
@@ -208,8 +213,19 @@ pub fn execute_legado_rule_with_http_state(
 ) -> Result<Vec<String>, String> {
     let rule_str = rule_str.trim();
     if rule_str.starts_with("@js:") || rule_str.starts_with("js:") {
-        return execute_legado_rule_values_with_http_state(rule_str, html, context, cookie_jar, default_headers)
-            .map(|values| values.into_iter().map(|value| value.as_string_lossy()).collect());
+        return execute_legado_rule_values_with_http_state(
+            rule_str,
+            html,
+            context,
+            cookie_jar,
+            default_headers,
+        )
+        .map(|values| {
+            values
+                .into_iter()
+                .map(|value| value.as_string_lossy())
+                .collect()
+        });
     }
 
     execute_legado_rule(rule_str, html, context)
@@ -300,7 +316,16 @@ fn parse_css_selector_safely(selector_str: &str) -> Result<scraper::Selector, St
 }
 
 fn split_css_output(rule: &str) -> (&str, Option<&str>) {
-    const OUTPUTS: &[&str] = &["text", "textNodes", "ownText", "html", "all", "href", "src", "content"];
+    const OUTPUTS: &[&str] = &[
+        "text",
+        "textNodes",
+        "ownText",
+        "html",
+        "all",
+        "href",
+        "src",
+        "content",
+    ];
     if let Some((selector, output)) = rule.rsplit_once('@') {
         if OUTPUTS.contains(&output) || !output.is_empty() {
             return (selector.trim(), Some(output.trim()));
@@ -316,8 +341,8 @@ fn execute_xpath_rule(rule: &str, html: &str) -> Result<Vec<String>, String> {
         return Ok(vec![]);
     }
 
-    let package = sxd_document::parser::parse(html)
-        .map_err(|e| format!("HTML parse error: {}", e))?;
+    let package =
+        sxd_document::parser::parse(html).map_err(|e| format!("HTML parse error: {}", e))?;
     let document = package.as_document();
 
     let xpath = sxd_xpath::Factory::new()
@@ -331,10 +356,7 @@ fn execute_xpath_rule(rule: &str, html: &str) -> Result<Vec<String>, String> {
         .map_err(|e| format!("XPath eval error: {}", e))?;
 
     let results: Vec<String> = match value {
-        sxd_xpath::Value::Nodeset(nodes) => nodes
-            .iter()
-            .map(|node| node.string_value())
-            .collect(),
+        sxd_xpath::Value::Nodeset(nodes) => nodes.iter().map(|node| node.string_value()).collect(),
         sxd_xpath::Value::Boolean(b) => vec![b.to_string()],
         sxd_xpath::Value::Number(n) => vec![n.to_string()],
         sxd_xpath::Value::String(s) => vec![s],
@@ -362,8 +384,8 @@ fn execute_jsonpath_rule(rule: &str, html: &str) -> Result<Vec<String>, String> 
         return Ok(vec![]);
     }
 
-    let results = jsonpath_lib::select(&json_val, expr_str)
-        .map_err(|e| format!("JSONPath error: {}", e))?;
+    let results =
+        jsonpath_lib::select(&json_val, expr_str).map_err(|e| format!("JSONPath error: {}", e))?;
 
     let mut strings = Vec::new();
     for value in results {
@@ -391,11 +413,7 @@ fn execute_jsonpath_rule(rule: &str, html: &str) -> Result<Vec<String>, String> 
 }
 
 /// 执行 JS 规则（委托给 JS runtime）
-fn execute_js_rule(
-    rule: &str,
-    html: &str,
-    context: &RuleContext,
-) -> Result<Vec<String>, String> {
+fn execute_js_rule(rule: &str, html: &str, context: &RuleContext) -> Result<Vec<String>, String> {
     let vars = js_runtime::build_runtime_vars(context, html);
     let runtime = js_runtime::DefaultJsRuntime::new();
     let value = runtime.eval(rule, &vars)?;
@@ -412,7 +430,11 @@ fn execute_get_rule(rule: &str, context: &RuleContext) -> Result<Vec<String>, St
         .or_else(|| rule.strip_prefix("@get."))
         .unwrap_or_default()
         .trim();
-    let key = key.strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(key).trim();
+    let key = key
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'))
+        .unwrap_or(key)
+        .trim();
     if key.is_empty() {
         return Ok(vec![]);
     }
@@ -424,7 +446,11 @@ fn execute_get_rule(rule: &str, context: &RuleContext) -> Result<Vec<String>, St
     }
 }
 
-fn execute_put_rule(rule: &str, html: &str, context: &mut RuleContext) -> Result<Vec<String>, String> {
+fn execute_put_rule(
+    rule: &str,
+    html: &str,
+    context: &mut RuleContext,
+) -> Result<Vec<String>, String> {
     let expr = rule.strip_prefix("@put:").unwrap_or_default().trim();
     if expr.is_empty() {
         return Ok(vec![]);
@@ -440,7 +466,9 @@ fn execute_put_rule(rule: &str, html: &str, context: &mut RuleContext) -> Result
 
     let json_like = expr.trim().trim_start_matches('{').trim_end_matches('}');
     for pair in json_like.split(',') {
-        let Some((key, value_rule)) = pair.split_once(':') else { continue };
+        let Some((key, value_rule)) = pair.split_once(':') else {
+            continue;
+        };
         let key = key.trim().trim_matches(|c| c == '"' || c == '\'');
         let value_rule = value_rule.trim().trim_matches(|c| c == '"' || c == '\'');
         if key.is_empty() || value_rule.is_empty() {
@@ -491,7 +519,11 @@ fn execute_inline_js_rule(
     let runtime = js_runtime::DefaultJsRuntime::new();
     for item in input {
         let mut child_context = context.clone();
-        child_context.src = if context.src.is_empty() { html.to_string() } else { context.src.clone() };
+        child_context.src = if context.src.is_empty() {
+            html.to_string()
+        } else {
+            context.src.clone()
+        };
         child_context.result = vec![LegadoValue::String(item)];
         let vars = js_runtime::build_runtime_vars(&child_context, html);
         let value = runtime.eval(script, &vars)?;
@@ -536,10 +568,7 @@ fn execute_regex_rule(rule: &str, html: &str) -> Result<Vec<String>, String> {
     let (pattern, flags) = if pattern.starts_with('/') {
         let rest = &pattern[1..];
         if let Some(last_slash) = rest.rfind('/') {
-            (
-                &rest[..last_slash],
-                &rest[last_slash + 1..],
-            )
+            (&rest[..last_slash], &rest[last_slash + 1..])
         } else {
             (rest, "")
         }
@@ -558,7 +587,9 @@ fn execute_regex_rule(rule: &str, html: &str) -> Result<Vec<String>, String> {
         builder.multi_line(true);
     }
 
-    let re = builder.build().map_err(|e| format!("Regex compile error: {}", e))?;
+    let re = builder
+        .build()
+        .map_err(|e| format!("Regex compile error: {}", e))?;
 
     let results: Vec<String> = re
         .captures_iter(html)
@@ -579,10 +610,7 @@ fn execute_all_in_one_rule(rule: &str, html: &str) -> Result<Vec<String>, String
     let all_in_one = regex_rule::parse_all_in_one(rule)?;
     let rows = regex_rule::execute_all_in_one(&all_in_one, html);
     // 展平为字符串列表
-    let strings: Vec<String> = rows
-        .into_iter()
-        .flat_map(|row| row)
-        .collect();
+    let strings: Vec<String> = rows.into_iter().flat_map(|row| row).collect();
     Ok(strings)
 }
 
@@ -604,7 +632,11 @@ fn contains_combinator(rule: &str) -> bool {
         match chars[i] {
             '"' => in_quote = !in_quote,
             '[' => in_bracket += 1,
-            ']' => if in_bracket > 0 { in_bracket -= 1 },
+            ']' => {
+                if in_bracket > 0 {
+                    in_bracket -= 1
+                }
+            }
             '|' if !in_quote && in_bracket == 0 => {
                 if i + 1 < chars.len() && chars[i + 1] == '|' {
                     return true;
@@ -641,7 +673,9 @@ fn execute_combinator_rule(
         // 交错合并
         let all_results: Vec<Vec<String>> = parts
             .iter()
-            .map(|p| execute_rule_part_with_context(p, html, &mut shared_context).unwrap_or_default())
+            .map(|p| {
+                execute_rule_part_with_context(p, html, &mut shared_context).unwrap_or_default()
+            })
             .collect();
 
         let max_len = all_results.iter().map(|v| v.len()).max().unwrap_or(0);
@@ -667,7 +701,8 @@ fn execute_combinator_rule(
         // 合并所有结果
         let mut merged = Vec::new();
         for part in &parts {
-            if let Ok(mut results) = execute_rule_part_with_context(part, html, &mut shared_context) {
+            if let Ok(mut results) = execute_rule_part_with_context(part, html, &mut shared_context)
+            {
                 merged.append(&mut results);
             }
         }
@@ -737,11 +772,31 @@ fn looks_like_xpath_function(s: &str) -> bool {
     if let Some(paren_pos) = s.find('(') {
         let prefix = &s[..paren_pos];
         const XPATH_FUNCTIONS: &[&str] = &[
-            "count", "normalize-space", "string", "concat", "contains",
-            "starts-with", "substring", "substring-before", "substring-after",
-            "string-length", "translate", "not", "true", "false", "number",
-            "sum", "floor", "ceiling", "round", "name", "local-name",
-            "namespace-uri", "lang", "position", "last",
+            "count",
+            "normalize-space",
+            "string",
+            "concat",
+            "contains",
+            "starts-with",
+            "substring",
+            "substring-before",
+            "substring-after",
+            "string-length",
+            "translate",
+            "not",
+            "true",
+            "false",
+            "number",
+            "sum",
+            "floor",
+            "ceiling",
+            "round",
+            "name",
+            "local-name",
+            "namespace-uri",
+            "lang",
+            "position",
+            "last",
         ];
         XPATH_FUNCTIONS.contains(&prefix)
     } else {
@@ -757,7 +812,8 @@ mod tests {
     fn test_inline_js_after_css_rule() {
         let html = r#"<div><a>Book</a></div>"#;
         let context = RuleContext::new("https://example.com", html);
-        let result = execute_legado_rule("@css:a@text<js>result + '-ok'</js>", html, &context).unwrap();
+        let result =
+            execute_legado_rule("@css:a@text<js>result + '-ok'</js>", html, &context).unwrap();
         assert_eq!(result, vec!["Book-ok"]);
     }
 
@@ -773,7 +829,12 @@ mod tests {
     fn test_inline_js_before_following_rule() {
         let html = r#"<div><span>A</span></div>"#;
         let context = RuleContext::new("https://example.com", html);
-        let result = execute_legado_rule("@css:div@html<js>result.replace('span', 'a').replace('span', 'a')</js>@css:a@text", html, &context).unwrap();
+        let result = execute_legado_rule(
+            "@css:div@html<js>result.replace('span', 'a').replace('span', 'a')</js>@css:a@text",
+            html,
+            &context,
+        )
+        .unwrap();
         assert_eq!(result, vec!["A"]);
     }
 
@@ -781,7 +842,8 @@ mod tests {
     fn test_put_get_in_combinator_rule() {
         let html = r#"<div><a>Book</a></div>"#;
         let context = RuleContext::new("https://example.com", html);
-        let result = execute_legado_rule("@put:title=@css:a@text&&@get:title", html, &context).unwrap();
+        let result =
+            execute_legado_rule("@put:title=@css:a@text&&@get:title", html, &context).unwrap();
         assert_eq!(result, vec!["Book"]);
     }
 

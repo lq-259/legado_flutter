@@ -33,8 +33,7 @@ pub fn parse_all_in_one(rule: &str) -> Result<AllInOneRule, String> {
         return Err("AllInOne rule pattern is empty".into());
     }
 
-    let regex = Regex::new(pattern)
-        .map_err(|e| format!("AllInOne regex compile error: {}", e))?;
+    let regex = Regex::new(pattern).map_err(|e| format!("AllInOne regex compile error: {}", e))?;
 
     // 收集所有具名和编号捕获组
     let mut groups = Vec::new();
@@ -54,7 +53,10 @@ pub fn execute_all_in_one(rule: &AllInOneRule, html: &str) -> Vec<Vec<String>> {
     for caps in rule.regex.captures_iter(html) {
         let mut row = Vec::new();
         for &group in &rule.groups {
-            let val = caps.get(group).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let val = caps
+                .get(group)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
             row.push(val);
         }
         if !row.is_empty() {

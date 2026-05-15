@@ -11,11 +11,15 @@
 use reqwest::cookie::Jar;
 use reqwest::Client as ReqwestClient;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::warn;
 
-use super::url::{LegadoUrl, parse_headers, parse_proxy, get_charset_from_option, guess_charset_from_response};
+use super::url::{
+    get_charset_from_option, guess_charset_from_response, parse_headers, parse_proxy, LegadoUrl,
+};
+
+const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 /// Legado HTTP 客户端
 ///
@@ -25,6 +29,7 @@ use super::url::{LegadoUrl, parse_headers, parse_proxy, get_charset_from_option,
 pub struct LegadoHttpClient {
     client: ReqwestClient,
     cookie_jar: Arc<Jar>,
+    proxy_clients: Arc<Mutex<HashMap<String, ReqwestClient>>>,
 }
 
 impl LegadoHttpClient {
@@ -38,7 +43,33 @@ impl LegadoHttpClient {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { client, cookie_jar }
+        Self {
+            client,
+            cookie_jar,
+            proxy_clients: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn proxy_client(&self, proxy_url: &str) -> Result<ReqwestClient, String> {
+        let mut cache = self
+            .proxy_clients
+            .lock()
+            .map_err(|e| format!("proxy lock: {e}"))?;
+        if let Some(client) = cache.get(proxy_url) {
+            return Ok(client.clone());
+        }
+        let proxy =
+            reqwest::Proxy::all(proxy_url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
+        let client = ReqwestClient::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(15))
+            .cookie_provider(self.cookie_jar.clone())
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .proxy(proxy)
+            .build()
+            .map_err(|e| format!("Failed to create proxy client: {}", e))?;
+        cache.insert(proxy_url.to_string(), client.clone());
+        Ok(client)
     }
 
     pub fn cookie_jar(&self) -> Arc<Jar> {
@@ -57,7 +88,8 @@ impl LegadoHttpClient {
         headers: &[(String, String)],
         charset: Option<&str>,
     ) -> Result<String, String> {
-        self.request("GET", url, None, headers, charset, 0, None).await
+        self.request("GET", url, None, headers, charset, 0, None)
+            .await
     }
 
     /// 发起 HTTP POST 请求
@@ -74,7 +106,8 @@ impl LegadoHttpClient {
         headers: &[(String, String)],
         charset: Option<&str>,
     ) -> Result<String, String> {
-        self.request("POST", url, Some(body), headers, charset, 0, None).await
+        self.request("POST", url, Some(body), headers, charset, 0, None)
+            .await
     }
 
     /// 通用请求方法（带重试循环）
@@ -97,16 +130,7 @@ impl LegadoHttpClient {
 
         for attempt in 0..max_retries {
             let client = if let Some(proxy_url) = proxy {
-                let proxy = reqwest::Proxy::all(proxy_url)
-                    .map_err(|e| format!("Invalid proxy URL: {}", e))?;
-                reqwest::Client::builder()
-                    .timeout(Duration::from_secs(30))
-                    .connect_timeout(Duration::from_secs(15))
-                    .cookie_provider(self.cookie_jar.clone())
-                    .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                    .proxy(proxy)
-                    .build()
-                    .map_err(|e| format!("Failed to create proxy client: {}", e))?
+                self.proxy_client(proxy_url)?
             } else {
                 self.client.clone()
             };
@@ -166,14 +190,11 @@ impl LegadoHttpClient {
                         })
                         .collect();
 
-                    let bytes = response
-                        .bytes()
-                        .await
-                        .map_err(|e| format!("Failed to read response body: {}", e))?;
+                    let bytes = read_limited_body(response, MAX_RESPONSE_BYTES).await?;
 
-                    let encoding_name = charset
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| guess_charset_from_response(&headers_map, &bytes).to_string());
+                    let encoding_name = charset.map(|c| c.to_string()).unwrap_or_else(|| {
+                        guess_charset_from_response(&headers_map, &bytes).to_string()
+                    });
 
                     return decode_bytes(&bytes, &encoding_name);
                 }
@@ -204,7 +225,8 @@ impl LegadoHttpClient {
         keyword: &str,
         page: i32,
     ) -> Result<String, String> {
-        self.request_with_legado_url_and_headers(full_url, legado_url, keyword, page, &[]).await
+        self.request_with_legado_url_and_headers(full_url, legado_url, keyword, page, &[])
+            .await
     }
 
     /// 使用 LegadoUrl 和额外书源请求头发起请求。
@@ -223,14 +245,23 @@ impl LegadoHttpClient {
         let charset = get_charset_from_option(&legado_url.options);
         let mut headers = parse_headers(&legado_url.options.headers);
         headers.extend_from_slice(extra_headers);
-        let body = legado_url.options.body.as_deref().map(|b| super::url::resolve_post_body(b, keyword, page));
+        let body = legado_url
+            .options
+            .body
+            .as_deref()
+            .map(|b| super::url::resolve_post_body(b, keyword, page));
         let retry = legado_url.options.retry;
         let proxy = parse_proxy(&legado_url.options.headers);
 
         let mut request_url = full_url.to_string();
         let mut all_headers = headers.clone();
 
-        if let Some(script) = legado_url.options.js.as_deref().filter(|s| !s.trim().is_empty()) {
+        if let Some(script) = legado_url
+            .options
+            .js
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
             let js_context = super::js_runtime::UrlJsContext::new(&request_url, &all_headers);
             if let Ok(updated) = super::js_runtime::eval_url_option_js(script, &js_context) {
                 request_url = updated.url;
@@ -238,7 +269,16 @@ impl LegadoHttpClient {
             }
         }
 
-        self.request_with_headers(method, &request_url, body.as_deref(), &all_headers, charset, retry, proxy.as_deref()).await
+        self.request_with_headers(
+            method,
+            &request_url,
+            body.as_deref(),
+            &all_headers,
+            charset,
+            retry,
+            proxy.as_deref(),
+        )
+        .await
     }
 
     async fn request_with_headers(
@@ -251,7 +291,8 @@ impl LegadoHttpClient {
         retry: i32,
         proxy: Option<&str>,
     ) -> Result<String, String> {
-        self.request(method, url, body, headers, charset, retry, proxy).await
+        self.request(method, url, body, headers, charset, retry, proxy)
+            .await
     }
 }
 
@@ -259,6 +300,31 @@ impl Default for LegadoHttpClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+async fn read_limited_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > max_bytes as u64)
+    {
+        return Err(format!("Response body exceeds limit: {} bytes", max_bytes));
+    }
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?
+    {
+        if bytes.len() + chunk.len() > max_bytes {
+            return Err(format!("Response body exceeds limit: {} bytes", max_bytes));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// 解码字节数组为字符串

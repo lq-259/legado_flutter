@@ -23,9 +23,12 @@ final backendModeProvider = StateProvider<BackendMode>((ref) => BackendMode.frb)
 
 final apiBaseUrlProvider = StateProvider<String>((ref) => 'http://localhost:3000');
 
+final apiTokenProvider = StateProvider<String?>((ref) => null);
+
 final apiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(apiBaseUrlProvider);
-  return ApiClient(baseUrl: baseUrl);
+  final token = ref.watch(apiTokenProvider);
+  return ApiClient(baseUrl: baseUrl, token: token);
 });
 
 final readerApiProvider = Provider<ReaderApi>((ref) {

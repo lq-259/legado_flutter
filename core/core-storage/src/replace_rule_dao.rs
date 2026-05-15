@@ -3,11 +3,11 @@
 //! 提供替换规则相关的数据库操作。
 //! 对应原 Legado 的 ReplaceRule 实体操作 (data/entities/ReplaceRule.kt)
 
-use rusqlite::{Connection, Result as SqlResult, params};
+use super::models::ReplaceRule;
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
 use tracing::{debug, info};
 use uuid::Uuid;
-use chrono::Utc;
-use super::models::ReplaceRule;
 
 /// 替换规则 DAO
 pub struct ReplaceRuleDao<'a> {
@@ -57,7 +57,7 @@ impl<'a> ReplaceRuleDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, pattern, replacement, enabled, scope, sort_number,
                     created_at, updated_at
-             FROM replace_rules WHERE id = ?"
+             FROM replace_rules WHERE id = ?",
         )?;
 
         let mut rows = stmt.query(params![id])?;
@@ -74,7 +74,7 @@ impl<'a> ReplaceRuleDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, pattern, replacement, enabled, scope, sort_number,
                     created_at, updated_at
-             FROM replace_rules ORDER BY sort_number ASC"
+             FROM replace_rules ORDER BY sort_number ASC",
         )?;
 
         let rows = stmt.query_map([], replace_rule_from_row)?;
@@ -86,7 +86,7 @@ impl<'a> ReplaceRuleDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, pattern, replacement, enabled, scope, sort_number,
                     created_at, updated_at
-             FROM replace_rules WHERE enabled = 1 ORDER BY sort_number ASC"
+             FROM replace_rules WHERE enabled = 1 ORDER BY sort_number ASC",
         )?;
 
         let rows = stmt.query_map([], replace_rule_from_row)?;
@@ -98,7 +98,7 @@ impl<'a> ReplaceRuleDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, pattern, replacement, enabled, scope, sort_number,
                     created_at, updated_at
-             FROM replace_rules WHERE scope = ? ORDER BY sort_number ASC"
+             FROM replace_rules WHERE scope = ? ORDER BY sort_number ASC",
         )?;
 
         let rows = stmt.query_map(params![scope], replace_rule_from_row)?;
@@ -108,7 +108,8 @@ impl<'a> ReplaceRuleDao<'a> {
     /// 删除替换规则
     pub fn delete(&self, id: &str) -> SqlResult<()> {
         info!("删除替换规则: {}", id);
-        self.conn.execute("DELETE FROM replace_rules WHERE id = ?", params![id])?;
+        self.conn
+            .execute("DELETE FROM replace_rules WHERE id = ?", params![id])?;
         Ok(())
     }
 

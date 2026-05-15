@@ -3,8 +3,8 @@
 //! 定义 core-storage 使用的核心数据结构。
 //! 对应原 Legado 的 data/entities/ 中的数据实体。
 
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 /// 书源结构体（对应原 Legado 的 BookSource 实体）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,18 +12,18 @@ pub struct BookSource {
     pub id: String,
     pub name: String,
     pub url: String,
-    pub source_type: i32,  // 0=小说, 1=音频, 2=图片, 3=RSS
+    pub source_type: i32, // 0=小说, 1=音频, 2=图片, 3=RSS
     pub group_name: Option<String>,
     pub enabled: bool,
     pub custom_order: i32,
     pub weight: i32,
-    
+
     // 规则（JSON 格式存储）
     pub rule_search: Option<String>,
     pub rule_book_info: Option<String>,
     pub rule_toc: Option<String>,
     pub rule_content: Option<String>,
-    
+
     // 其他配置
     pub login_url: Option<String>,
     pub header: Option<String>,
@@ -39,7 +39,7 @@ pub struct BookSource {
     pub last_update_time: i64,
     #[serde(default)]
     pub book_source_comment: Option<String>,
-    
+
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -95,7 +95,7 @@ pub struct BookProgress {
     pub chapter_index: i32,
     pub paragraph_index: i32,
     pub offset: i32,
-    pub read_time: i64,  // 累计阅读时长（毫秒）
+    pub read_time: i64, // 累计阅读时长（毫秒）
     pub updated_at: i64,
 }
 
@@ -118,7 +118,7 @@ pub struct ReplaceRule {
     pub pattern: String,
     pub replacement: String,
     pub enabled: bool,
-    pub scope: i32,  // 0=全局, 1=书源, 2=书籍
+    pub scope: i32, // 0=全局, 1=书源, 2=书籍
     pub sort_number: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -133,7 +133,7 @@ pub struct DownloadTask {
     pub cover_url: Option<String>,
     pub total_chapters: i32,
     pub downloaded_chapters: i32,
-    pub status: i32,  // 0=等待, 1=下载中, 2=暂停, 3=完成, 4=失败
+    pub status: i32, // 0=等待, 1=下载中, 2=暂停, 3=完成, 4=失败
     pub total_size: i64,
     pub downloaded_size: i64,
     pub error_message: Option<String>,
@@ -149,7 +149,7 @@ pub struct DownloadChapter {
     pub chapter_id: String,
     pub chapter_index: i32,
     pub chapter_title: String,
-    pub status: i32,  // 0=等待, 1=下载中, 2=完成, 3=失败
+    pub status: i32, // 0=等待, 1=下载中, 2=完成, 3=失败
     pub file_path: Option<String>,
     pub file_size: i64,
     pub error_message: Option<String>,

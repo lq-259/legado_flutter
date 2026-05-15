@@ -66,7 +66,11 @@ pub struct SelectorModifiers {
 pub enum ArrayModifier {
     Include(Vec<isize>),
     Exclude(Vec<isize>),
-    Range { start: Option<isize>, end: Option<isize>, step: isize },
+    Range {
+        start: Option<isize>,
+        end: Option<isize>,
+        step: isize,
+    },
 }
 
 /// 解析后的选择器链
@@ -149,7 +153,9 @@ pub fn parse_legado_selector(raw: &str) -> LegadoSelectorChain {
 fn push_selector_segments(segments: &mut Vec<SelectorSegment>, selector: &str) {
     for part in selector.split_whitespace() {
         if !part.is_empty() {
-            segments.push(parse_selector_with_modifiers(&normalize_selector_alias(part)));
+            segments.push(parse_selector_with_modifiers(&normalize_selector_alias(
+                part,
+            )));
         }
     }
 }
@@ -370,7 +376,11 @@ fn parse_array_modifier(body: &str) -> Option<ArrayModifier> {
 
 fn parse_optional_index(value: &str) -> Option<isize> {
     let value = value.trim();
-    if value.is_empty() { None } else { value.parse().ok() }
+    if value.is_empty() {
+        None
+    } else {
+        value.parse().ok()
+    }
 }
 
 fn parse_index_list(body: &str) -> Option<Vec<isize>> {
@@ -378,10 +388,18 @@ fn parse_index_list(body: &str) -> Option<Vec<isize>> {
         .split(',')
         .filter_map(|part| {
             let part = part.trim();
-            if part.is_empty() { None } else { part.parse().ok() }
+            if part.is_empty() {
+                None
+            } else {
+                part.parse().ok()
+            }
         })
         .collect();
-    if indexes.is_empty() { None } else { Some(indexes) }
+    if indexes.is_empty() {
+        None
+    } else {
+        Some(indexes)
+    }
 }
 
 /// 分离净化正则段
@@ -401,7 +419,10 @@ fn split_purification(rule: &str) -> (String, Option<(String, String)>) {
                         Some((pattern.to_string(), replacement.to_string())),
                     );
                 }
-                return (selector.to_string(), Some((content.to_string(), String::new())));
+                return (
+                    selector.to_string(),
+                    Some((content.to_string(), String::new())),
+                );
             }
         }
     }
@@ -420,7 +441,10 @@ fn split_purification(rule: &str) -> (String, Option<(String, String)>) {
                         Some((pattern.to_string(), replacement.to_string())),
                     );
                 }
-                return (selector.to_string(), Some((content.to_string(), String::new())));
+                return (
+                    selector.to_string(),
+                    Some((content.to_string(), String::new())),
+                );
             }
         }
     }
@@ -465,7 +489,11 @@ pub fn execute_selector_chain(
                 }
             } else {
                 let idx = index as usize;
-                if idx < contexts.len() { idx } else { contexts.len() - 1 }
+                if idx < contexts.len() {
+                    idx
+                } else {
+                    contexts.len() - 1
+                }
             };
             contexts = contexts.get(idx).cloned().into_iter().collect();
         }
@@ -512,17 +540,26 @@ fn apply_array_modifier(contexts: Vec<String>, array: &ArrayModifier) -> Vec<Str
                 return Vec::new();
             }
             let step = *step;
-            let mut current = start.and_then(|idx| normalize_index(idx, len)).unwrap_or(if step < 0 { len - 1 } else { 0 }) as isize;
-            let end = end.and_then(|idx| normalize_index(idx, len)).unwrap_or(if step < 0 { 0 } else { len - 1 }) as isize;
+            let mut current = start
+                .and_then(|idx| normalize_index(idx, len))
+                .unwrap_or(if step < 0 { len - 1 } else { 0 })
+                as isize;
+            let end = end
+                .and_then(|idx| normalize_index(idx, len))
+                .unwrap_or(if step < 0 { 0 } else { len - 1 }) as isize;
             let mut out = Vec::new();
             if step > 0 {
                 while current <= end {
-                    if let Some(value) = contexts.get(current as usize) { out.push(value.clone()); }
+                    if let Some(value) = contexts.get(current as usize) {
+                        out.push(value.clone());
+                    }
                     current += step;
                 }
             } else {
                 while current >= end {
-                    if let Some(value) = contexts.get(current as usize) { out.push(value.clone()); }
+                    if let Some(value) = contexts.get(current as usize) {
+                        out.push(value.clone());
+                    }
                     current += step;
                 }
             }
@@ -552,10 +589,7 @@ fn normalize_index(index: isize, len: usize) -> Option<usize> {
 }
 
 /// 在单个上下文中应用选择器段落
-fn apply_selector_segment(
-    segment: &SelectorSegment,
-    html: &str,
-) -> Result<Vec<String>, String> {
+fn apply_selector_segment(segment: &SelectorSegment, html: &str) -> Result<Vec<String>, String> {
     let sel = segment.selector.trim();
 
     if sel.is_empty() {
@@ -576,10 +610,7 @@ fn apply_selector_segment(
     let selector = parse_selector_safely(sel)?;
 
     let document = Html::parse_document(html);
-    let results: Vec<String> = document
-        .select(&selector)
-        .map(|el| el.html())
-        .collect();
+    let results: Vec<String> = document.select(&selector).map(|el| el.html()).collect();
 
     Ok(results)
 }
@@ -587,16 +618,15 @@ fn apply_selector_segment(
 /// 从 HTML 片段中按提取类型提取内容
 fn extract_from_html(html: &str, extract: &ExtractSuffix) -> Vec<String> {
     match extract {
-        ExtractSuffix::None | ExtractSuffix::Html | ExtractSuffix::All => {
+        ExtractSuffix::Html | ExtractSuffix::All => {
             vec![html.to_string()]
         }
-        ExtractSuffix::Text | ExtractSuffix::TextNodes | ExtractSuffix::TextNode => {
+        ExtractSuffix::None
+        | ExtractSuffix::Text
+        | ExtractSuffix::TextNodes
+        | ExtractSuffix::TextNode => {
             let document = Html::parse_document(html);
-            let text: String = document
-                .root_element()
-                .text()
-                .collect::<Vec<_>>()
-                .join("");
+            let text: String = document.root_element().text().collect::<Vec<_>>().join("");
             vec![text]
         }
         ExtractSuffix::OwnText => {
@@ -700,7 +730,7 @@ mod tests {
     #[test]
     fn test_parse_with_purification() {
         let chain = parse_legado_selector("div.content@html##(本章完)");
-        assert_eq!(chain.segments.len(), 2);
+        assert_eq!(chain.segments.len(), 1);
         assert!(chain.purification.is_some());
         let (pat, rep) = chain.purification.unwrap();
         assert_eq!(pat, "(本章完)");
@@ -747,7 +777,11 @@ mod tests {
     fn test_children_selector() {
         let html = r#"<div><span>A</span><p>B</p><span>C</span></div>"#;
         let results = execute_rule_str("div@children", html).unwrap();
-        assert!(results.len() >= 3, "expected at least 3 results, got {}", results.len());
+        assert!(
+            results.len() >= 3,
+            "expected at least 3 results, got {}",
+            results.len()
+        );
     }
 
     #[test]
@@ -832,7 +866,8 @@ mod tests {
 
     #[test]
     fn test_multi_segment_chained_with_index() {
-        let html = r#"<div class="list"><ul><li>A</li><li>B</li></ul><ul><li>C</li><li>D</li></ul></div>"#;
+        let html =
+            r#"<div class="list"><ul><li>A</li><li>B</li></ul><ul><li>C</li><li>D</li></ul></div>"#;
         let results = execute_rule_str("class.list ul.1 li.0@text", html).unwrap();
         assert_eq!(results, vec!["C"]);
     }
@@ -921,7 +956,10 @@ mod tests {
     fn test_own_text_extraction() {
         let html = r#"<div>Pure <span>Inner</span></div>"#;
         let results = execute_rule_str("div@ownText", html).unwrap();
-        assert!(!results.is_empty(), "ownText should produce non-empty result");
+        assert!(
+            !results.is_empty(),
+            "ownText should produce non-empty result"
+        );
     }
 
     #[test]

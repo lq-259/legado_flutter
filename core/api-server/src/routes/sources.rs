@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Json, Path, State},
+    extract::{DefaultBodyLimit, Json, Path, State},
     routing::{delete, get, post, put},
     Router,
 };
@@ -30,9 +30,7 @@ pub struct ImportSourcesResponse {
     pub count: i32,
 }
 
-async fn list_sources(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+async fn list_sources(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let mut conn = open_db(&state.db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
     let sources = dao
@@ -113,9 +111,7 @@ async fn delete_source(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-async fn export_legado(
-    State(state): State<AppState>,
-) -> Result<String, ApiError> {
+async fn export_legado(State(state): State<AppState>) -> Result<String, ApiError> {
     let mut conn = open_db(&state.db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
     let json = dao
@@ -128,7 +124,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/sources", get(list_sources).post(create_source))
         .route("/api/sources/enabled", get(list_enabled_sources))
-        .route("/api/sources/import", post(import_sources))
+        .route(
+            "/api/sources/import",
+            post(import_sources).layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         .route("/api/sources/export/legado", get(export_legado))
         .route("/api/sources/:id/enabled", put(set_source_enabled))
         .route("/api/sources/:id", delete(delete_source))

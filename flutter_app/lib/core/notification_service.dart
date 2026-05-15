@@ -23,23 +23,27 @@ class NotificationService {
       requestSoundPermission: false,
     );
 
-    await _plugin.initialize(
-      const InitializationSettings(
-        android: androidSettings,
-        iOS: iosSettings,
-      ),
-    );
-
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (androidPlugin != null) {
-      final channel = AndroidNotificationChannel(
-        _downloadChannelId,
-        _downloadChannelName,
-        description: '书籍下载进度通知',
-        importance: Importance.low,
+    try {
+      await _plugin.initialize(
+        const InitializationSettings(
+          android: androidSettings,
+          iOS: iosSettings,
+        ),
       );
-      await androidPlugin.createNotificationChannel(channel);
+
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        final channel = AndroidNotificationChannel(
+          _downloadChannelId,
+          _downloadChannelName,
+          description: '书籍下载进度通知',
+          importance: Importance.low,
+        );
+        await androidPlugin.createNotificationChannel(channel);
+      }
+    } catch (_) {
+      _initialized = false;
     }
   }
 
@@ -50,31 +54,34 @@ class NotificationService {
     required int total,
   }) async {
     final progress = total > 0 ? current * 100 ~/ total : 0;
-    await _plugin.show(
-      id,
-      title,
-      '下载中 $current/$total ($progress%)',
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _downloadChannelId,
-          _downloadChannelName,
-          channelDescription: '书籍下载进度通知',
-          importance: Importance.low,
-          priority: Priority.low,
-          ongoing: true,
-          onlyAlertOnce: true,
-          showProgress: true,
-          maxProgress: total,
-          progress: current,
-          icon: 'ic_notification',
+    try {
+      if (!await hasPermission()) return;
+      await _plugin.show(
+        id,
+        title,
+        '下载中 $current/$total ($progress%)',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _downloadChannelId,
+            _downloadChannelName,
+            channelDescription: '书籍下载进度通知',
+            importance: Importance.low,
+            priority: Priority.low,
+            ongoing: true,
+            onlyAlertOnce: true,
+            showProgress: true,
+            maxProgress: total,
+            progress: current,
+            icon: 'ic_notification',
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: false,
+            presentBadge: true,
+            presentSound: false,
+          ),
         ),
-        iOS: const DarwinNotificationDetails(
-          presentAlert: false,
-          presentBadge: true,
-          presentSound: false,
-        ),
-      ),
-    );
+      );
+    } catch (_) {}
   }
 
   static Future<void> showDownloadComplete({
@@ -85,47 +92,67 @@ class NotificationService {
     required int skipCount,
   }) async {
     final hasFailures = failCount > 0 || skipCount > 0;
-    await _plugin.show(
-      id,
-      title,
-      hasFailures
-          ? '完成 (成功: $successCount, 失败: $failCount, 跳过: $skipCount)'
-          : '下载完成 ($successCount 章)',
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _downloadChannelId,
-          _downloadChannelName,
-          channelDescription: '书籍下载进度通知',
-          importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
-          ongoing: false,
-          autoCancel: true,
-          icon: 'ic_notification',
+    try {
+      if (!await hasPermission()) return;
+      await _plugin.show(
+        id,
+        title,
+        hasFailures
+            ? '完成 (成功: $successCount, 失败: $failCount, 跳过: $skipCount)'
+            : '下载完成 ($successCount 章)',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _downloadChannelId,
+            _downloadChannelName,
+            channelDescription: '书籍下载进度通知',
+            importance: Importance.defaultImportance,
+            priority: Priority.defaultPriority,
+            ongoing: false,
+            autoCancel: true,
+            icon: 'ic_notification',
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
         ),
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
-      ),
-    );
+      );
+    } catch (_) {}
   }
 
   static Future<void> cancelNotification(int id) async {
-    await _plugin.cancel(id);
+    try {
+      await _plugin.cancel(id);
+    } catch (_) {}
   }
 
   static Future<bool> hasPermission() async {
-    final result = await _channel.invokeMethod<bool>('hasPermission');
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('hasPermission');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
   }
 
   static Future<bool> requestPermission() async {
-    final result = await _channel.invokeMethod<bool>('requestPermission');
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('requestPermission');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
   }
 
   static Future<void> openNotificationSettings() async {
-    await _channel.invokeMethod('openNotificationSettings');
+    try {
+      await _channel.invokeMethod('openNotificationSettings');
+    } on MissingPluginException {
+    } on PlatformException {}
   }
 }

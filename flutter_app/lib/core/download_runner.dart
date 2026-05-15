@@ -72,6 +72,19 @@ class DownloadRunner {
     final totalChapters = task.chapters.length;
     final notificationId = task.taskId.hashCode.abs();
 
+    if (totalChapters == 0) {
+      try {
+        await rust_api.updateDownloadTaskStatus(
+          dbPath: task.dbPath,
+          taskId: task.taskId,
+          status: 4,
+          errorMessage: '无可下载章节',
+        );
+      } catch (_) {}
+      _completionController.add(task.taskId);
+      return;
+    }
+
     try {
       await rust_api.updateDownloadTaskStatus(
         dbPath: task.dbPath,
@@ -150,6 +163,14 @@ class DownloadRunner {
           status: 4,
           errorMessage:
               '部分章节下载失败 (成功: $successCount, 失败: $failCount, 跳过: $skipCount)',
+        );
+      } catch (_) {}
+    } else {
+      try {
+        await rust_api.updateDownloadTaskStatus(
+          dbPath: task.dbPath,
+          taskId: task.taskId,
+          status: 3,
         );
       } catch (_) {}
     }

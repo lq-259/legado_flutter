@@ -131,7 +131,7 @@ fn extract_json_option(s: &str) -> (&str, Option<String>) {
             if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
                 let after_json = s[end_pos..].trim();
                 if after_json.is_empty() {
-                    let prefix = s[..start].trim_end_matches(',').trim();
+                    let prefix = s[..start].trim().trim_end_matches(',').trim();
                     return (prefix, Some(candidate.to_string()));
                 }
             }
@@ -179,20 +179,30 @@ pub fn resolve_post_body(body: &str, keyword: &str, page: i32) -> String {
     resolve_template_expressions(body, keyword, page)
 }
 
+static TEMPLATE_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\{\{([\s\S]*?)\}\}").unwrap());
+
 fn resolve_template_expressions(input: &str, keyword: &str, page: i32) -> String {
-    let re = regex::Regex::new(r"\{\{([\s\S]*?)\}\}").unwrap();
     let vars = build_template_vars(keyword, page);
     let runtime = DefaultJsRuntime::new();
     let mut result = String::with_capacity(input.len());
     let mut last = 0;
 
-    for caps in re.captures_iter(input) {
-        let Some(full_match) = caps.get(0) else { continue };
+    for caps in TEMPLATE_RE.captures_iter(input) {
+        let Some(full_match) = caps.get(0) else {
+            continue;
+        };
         result.push_str(&input[last..full_match.start()]);
         let expr = caps.get(1).map(|m| m.as_str()).unwrap_or_default().trim();
-        let replacement = runtime
-            .eval(expr, &vars)
+        let replacement = vars
+            .get(expr)
             .map(|value| value.as_string_lossy())
+            .or_else(|| {
+                runtime
+                    .eval(expr, &vars)
+                    .ok()
+                    .map(|value| value.as_string_lossy())
+            })
             .unwrap_or_default();
         result.push_str(&replacement);
         last = full_match.end();
@@ -207,8 +217,14 @@ fn build_template_vars(keyword: &str, page: i32) -> HashMap<String, LegadoValue>
     vars.insert("key".into(), LegadoValue::String(keyword.to_string()));
     vars.insert("keyword".into(), LegadoValue::String(keyword.to_string()));
     vars.insert("page".into(), LegadoValue::Int(page as i64));
-    vars.insert("encodeKey".into(), LegadoValue::String(urlencoding::encode(keyword).to_string()));
-    vars.insert("encode_keyword".into(), LegadoValue::String(urlencoding::encode(keyword).to_string()));
+    vars.insert(
+        "encodeKey".into(),
+        LegadoValue::String(urlencoding::encode(keyword).to_string()),
+    );
+    vars.insert(
+        "encode_keyword".into(),
+        LegadoValue::String(urlencoding::encode(keyword).to_string()),
+    );
     vars
 }
 
@@ -229,11 +245,7 @@ fn resolve_conditional_page(url: &str, page: i32) -> String {
                     format!("{}{}", &url[..start], &url[start + end + 1..])
                 } else {
                     // 非第一页：保留 rest 部分（去掉 < >）
-                    let replaced = format!("{}{}{}",
-                        &url[..start],
-                        rest,
-                        &url[start + end + 1..]
-                    );
+                    let replaced = format!("{}{}{}", &url[..start], rest, &url[start + end + 1..]);
                     replaced
                 }
             } else {
@@ -281,7 +293,11 @@ pub fn guess_charset_from_response(headers: &HashMap<String, String>, body_bytes
             .split(';')
             .find(|s| s.trim().to_lowercase().starts_with("charset"))
         {
-            let charset = charset.split('=').nth(1).map(|s| s.trim()).unwrap_or("utf-8");
+            let charset = charset
+                .split('=')
+                .nth(1)
+                .map(|s| s.trim())
+                .unwrap_or("utf-8");
             return match charset.to_lowercase().as_str() {
                 "gbk" | "gb2312" | "gb18030" => charset.to_string(),
                 _ => "utf-8".to_string(),
@@ -309,9 +325,13 @@ pub fn guess_charset_from_response(headers: &HashMap<String, String>, body_bytes
 
 pub(crate) fn decode_response_bytes(bytes: &[u8], charset: &str) -> (String, bool) {
     let encoding = match charset.to_lowercase().as_str() {
-        "gbk" | "gb2312" | "gb18030" => encoding_rs::Encoding::for_label(b"gbk").unwrap_or(encoding_rs::UTF_8),
+        "gbk" | "gb2312" | "gb18030" => {
+            encoding_rs::Encoding::for_label(b"gbk").unwrap_or(encoding_rs::UTF_8)
+        }
         "big5" => encoding_rs::Encoding::for_label(b"big5").unwrap_or(encoding_rs::UTF_8),
-        "shift_jis" | "shift-jis" => encoding_rs::Encoding::for_label(b"shift_jis").unwrap_or(encoding_rs::UTF_8),
+        "shift_jis" | "shift-jis" => {
+            encoding_rs::Encoding::for_label(b"shift_jis").unwrap_or(encoding_rs::UTF_8)
+        }
         "euc-kr" => encoding_rs::Encoding::for_label(b"euc-kr").unwrap_or(encoding_rs::UTF_8),
         _ => encoding_rs::UTF_8,
     };
@@ -359,9 +379,7 @@ pub fn parse_headers(headers_value: &Option<serde_json::Value>) -> Vec<(String, 
 pub fn parse_proxy(headers: &Option<serde_json::Value>) -> Option<String> {
     let headers = headers.as_ref()?;
     match headers {
-        serde_json::Value::Object(map) => {
-            map.get("proxy")?.as_str().map(|s| s.to_string())
-        }
+        serde_json::Value::Object(map) => map.get("proxy")?.as_str().map(|s| s.to_string()),
         serde_json::Value::String(s) => {
             let map: HashMap<String, String> = serde_json::from_str(s).ok()?;
             map.get("proxy").cloned()
@@ -398,12 +416,13 @@ pub fn resolve_rule_template(
         return input.to_string();
     }
 
-    let re = regex::Regex::new(r"\{\{([\s\S]*?)\}\}").unwrap();
     let mut result = String::with_capacity(input.len());
     let mut last = 0;
 
-    for caps in re.captures_iter(input) {
-        let Some(full_match) = caps.get(0) else { continue };
+    for caps in TEMPLATE_RE.captures_iter(input) {
+        let Some(full_match) = caps.get(0) else {
+            continue;
+        };
         result.push_str(&input[last..full_match.start()]);
 
         let inner = caps.get(1).map(|m| m.as_str()).unwrap_or_default().trim();
@@ -426,8 +445,8 @@ fn resolve_single_template_rule(
     html: &str,
     context: &super::context::RuleContext,
 ) -> String {
+    use super::js_runtime::{build_runtime_vars, DefaultJsRuntime, JsRuntime};
     use super::rule::execute_legado_rule;
-    use super::js_runtime::{DefaultJsRuntime, JsRuntime, build_runtime_vars};
 
     let inner = inner.trim();
 
@@ -492,7 +511,10 @@ mod tests {
         assert_eq!(url.path, "/search?q={{key}}");
         assert_eq!(url.options.method.as_deref(), Some("POST"));
         assert_eq!(url.options.charset.as_deref(), Some("gbk"));
-        assert_eq!(url.options.body.as_deref(), Some("key={{key}}&page={{page}}"));
+        assert_eq!(
+            url.options.body.as_deref(),
+            Some("key={{key}}&page={{page}}")
+        );
     }
 
     #[test]

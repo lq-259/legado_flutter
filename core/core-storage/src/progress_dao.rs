@@ -3,10 +3,10 @@
 //! 提供阅读进度相关的数据库操作。
 //! 对应原 Legado 的 BookProgress 实体操作。
 
-use rusqlite::{Connection, Result as SqlResult, params};
-use tracing::debug;
-use chrono::Utc;
 use super::models::{BookProgress, Bookmark};
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
+use tracing::debug;
 
 /// 阅读进度 DAO
 pub struct ProgressDao<'a> {
@@ -21,8 +21,11 @@ impl<'a> ProgressDao<'a> {
 
     /// 保存或更新阅读进度
     pub fn upsert(&self, progress: &BookProgress) -> SqlResult<()> {
-        debug!("保存阅读进度: book_id={}, chapter={}", progress.book_id, progress.chapter_index);
-        
+        debug!(
+            "保存阅读进度: book_id={}, chapter={}",
+            progress.book_id, progress.chapter_index
+        );
+
         self.conn.execute(
             "INSERT INTO book_progress (book_id, chapter_index, paragraph_index, offset, read_time, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
@@ -41,7 +44,7 @@ impl<'a> ProgressDao<'a> {
                 progress.updated_at,
             ],
         )?;
-        
+
         Ok(())
     }
 
@@ -49,11 +52,11 @@ impl<'a> ProgressDao<'a> {
     pub fn get_by_book(&self, book_id: &str) -> SqlResult<Option<BookProgress>> {
         let mut stmt = self.conn.prepare(
             "SELECT book_id, chapter_index, paragraph_index, offset, read_time, updated_at
-             FROM book_progress WHERE book_id = ?"
+             FROM book_progress WHERE book_id = ?",
         )?;
-        
+
         let mut rows = stmt.query(params![book_id])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(progress_from_row(row)?))
         } else {
@@ -70,11 +73,11 @@ impl<'a> ProgressDao<'a> {
         offset: i32,
     ) -> SqlResult<()> {
         let now = Utc::now().timestamp();
-        
+
         // 获取现有进度以累加阅读时长
         let existing = self.get_by_book(book_id)?;
         let read_time = existing.map(|p| p.read_time).unwrap_or(0);
-        
+
         let progress = BookProgress {
             book_id: book_id.to_string(),
             chapter_index,
@@ -83,7 +86,7 @@ impl<'a> ProgressDao<'a> {
             read_time,
             updated_at: now,
         };
-        
+
         self.upsert(&progress)
     }
 
@@ -98,14 +101,20 @@ impl<'a> ProgressDao<'a> {
 
     /// 删除阅读进度
     pub fn delete(&self, book_id: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM book_progress WHERE book_id = ?", params![book_id])?;
+        self.conn.execute(
+            "DELETE FROM book_progress WHERE book_id = ?",
+            params![book_id],
+        )?;
         Ok(())
     }
 
     /// 添加书签
     pub fn add_bookmark(&self, bookmark: &Bookmark) -> SqlResult<()> {
-        debug!("添加书签: book_id={}, chapter={}", bookmark.book_id, bookmark.chapter_index);
-        
+        debug!(
+            "添加书签: book_id={}, chapter={}",
+            bookmark.book_id, bookmark.chapter_index
+        );
+
         self.conn.execute(
             "INSERT INTO bookmarks (id, book_id, chapter_index, paragraph_index, content, created_at)
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -118,13 +127,14 @@ impl<'a> ProgressDao<'a> {
                 bookmark.created_at,
             ],
         )?;
-        
+
         Ok(())
     }
 
     /// 删除书签
     pub fn delete_bookmark(&self, bookmark_id: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM bookmarks WHERE id = ?", params![bookmark_id])?;
+        self.conn
+            .execute("DELETE FROM bookmarks WHERE id = ?", params![bookmark_id])?;
         Ok(())
     }
 
@@ -132,9 +142,9 @@ impl<'a> ProgressDao<'a> {
     pub fn get_bookmarks(&self, book_id: &str) -> SqlResult<Vec<Bookmark>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_id, chapter_index, paragraph_index, content, created_at
-             FROM bookmarks WHERE book_id = ? ORDER BY chapter_index ASC, paragraph_index ASC"
+             FROM bookmarks WHERE book_id = ? ORDER BY chapter_index ASC, paragraph_index ASC",
         )?;
-        
+
         let rows = stmt.query_map(params![book_id], bookmark_from_row)?;
         rows.collect()
     }
@@ -156,7 +166,7 @@ impl<'a> ProgressDao<'a> {
             content: content.map(|s| s.to_string()),
             created_at: now,
         };
-        
+
         self.add_bookmark(&bookmark)?;
         Ok(bookmark)
     }

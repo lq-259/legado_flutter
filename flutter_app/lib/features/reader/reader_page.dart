@@ -76,6 +76,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   DateTime? _lastAutoChapterTime;
   bool _controlsVisible = false;
   ReaderSettings _settings = const ReaderSettings();
+  bool _readerSettingsLoaded = false;
   List<_LoadedChapter> _loadedChapters = [];
   final GlobalKey _listViewKey = GlobalKey();
   final Map<int, GlobalKey> _chapterTitleKeys = {};
@@ -88,6 +89,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   String _chapterUrl = '';
   List<_ContinuousItem>? _cachedContinuousItems;
   bool _isAppendingChapter = false;
+  bool _isPrependingChapter = false;
   List<Map<String, dynamic>> _bookmarks = [];
   bool _hasBookmarkForChapter = false;
   double? _sliderValue;
@@ -111,7 +113,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _currentIndex = widget.chapterIndex;
     _scrollController.addListener(_onScroll);
     loadReaderSettingsFromDisk().then((s) {
-      if (mounted) setState(() => _settings = s);
+      if (mounted) {
+        _setReaderSettings(s, markLoaded: true);
+      }
     });
     _loadBookmarks();
     _initTts();
@@ -135,6 +139,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _autoScrollTimer?.cancel();
     _searchController.dispose();
     _flutterTts.stop();
+    try {
+      _flutterTts.setCompletionHandler(() {});
+    } catch (_) {}
     _nowNotifier.dispose();
     if (_pageViewController != null) {
       try {
@@ -210,7 +217,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     }
     final book = await ref.read(bookByIdProvider(widget.bookId).future);
     final dbPath = await ref.read(dbPathProvider.future);
-    final sourceId = _sourceId.isNotEmpty ? _sourceId : (book?['source_id'] as String? ?? '');
+    final sourceId = _sourceId.isNotEmpty
+        ? _sourceId
+        : (book?['source_id'] as String? ?? '');
     final chapterUrl = chapters[index]['url'] as String? ?? '';
 
     String content = '无法获取章节内容（缺少书源或章节链接）';
@@ -337,6 +346,50 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     }
   }
 
+  void _setReaderSettings(ReaderSettings settings,
+      {bool persist = false, bool markLoaded = false}) {
+    final oldPageMode = _settings.pageMode;
+    setState(() {
+      if (markLoaded) {
+        _readerSettingsLoaded = true;
+      }
+      _settings = settings;
+      if (oldPageMode != ReaderPageMode.continuousScroll &&
+          settings.pageMode == ReaderPageMode.continuousScroll) {
+        _ensureCurrentChapterInContinuous();
+      } else if (oldPageMode != ReaderPageMode.page &&
+          settings.pageMode == ReaderPageMode.page &&
+          _chapterContent.isNotEmpty) {
+        final title =
+            _cachedChapters != null && _currentIndex < _cachedChapters!.length
+                ? (_cachedChapters![_currentIndex]['title'] as String? ?? '')
+                : '';
+        _pageViewController?.loadChapter(_currentIndex, title, _chapterContent);
+      }
+    });
+    ref.read(readerSettingsProvider.notifier).state = settings;
+    _pageViewController?.updateSettings(settings);
+    if (persist) {
+      saveReaderSettingsToDisk(settings);
+    }
+  }
+
+  void _ensureCurrentChapterInContinuous() {
+    if (_chapterContent.isEmpty) return;
+    final currentLoaded = _loadedChapters.length == 1 &&
+        _loadedChapters.first.index == _currentIndex &&
+        _loadedChapters.first.content == _chapterContent;
+    if (currentLoaded) return;
+    final title =
+        _cachedChapters != null && _currentIndex < _cachedChapters!.length
+            ? (_cachedChapters![_currentIndex]['title'] as String? ?? '')
+            : '';
+    _loadedChapters = [_LoadedChapter(_currentIndex, title, _chapterContent)];
+    _visibleChapterIndex = _currentIndex;
+    _cachedContinuousItems = null;
+    _chapterTitleKeys.clear();
+  }
+
   Future<void> _appendNextChapter() async {
     if (_cachedChapters == null || _isAppendingChapter || _isLoadingContent)
       return;
@@ -364,7 +417,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 
   Future<void> _prependPrevChapter() async {
-    if (_cachedChapters == null || _isAppendingChapter || _isLoadingContent)
+    if (_cachedChapters == null || _isPrependingChapter || _isLoadingContent)
       return;
     final chapters = _cachedChapters!;
     final firstLoaded = _loadedChapters.isNotEmpty
@@ -372,7 +425,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         : _currentIndex;
     final prevIndex = firstLoaded - 1;
     if (prevIndex < 0) return;
-    _isAppendingChapter = true;
+    _isPrependingChapter = true;
     setState(() {});
     try {
       final content = await _loadChapterContent(prevIndex, chapters);
@@ -388,7 +441,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         _loadedChapters.insert(0, prevChapter);
         _visibleChapterIndex = prevIndex;
         _cachedContinuousItems = null;
-        _isAppendingChapter = false;
+        _isPrependingChapter = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
@@ -400,7 +453,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         }
       });
     } catch (_) {
-      if (mounted) setState(() => _isAppendingChapter = false);
+      if (mounted) setState(() => _isPrependingChapter = false);
     }
   }
 
@@ -616,12 +669,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 
   void _onScroll() {
-    _scrollDebounceTimer?.cancel();
-    _scrollDebounceTimer =
-        Timer(const Duration(milliseconds: 500), _saveScrollPosition);
-    _visibleChapterTimer?.cancel();
-    _visibleChapterTimer =
-        Timer(const Duration(milliseconds: 300), _updateVisibleChapter);
+    if (_scrollDebounceTimer != null) return;
+    _scrollDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _scrollDebounceTimer = null;
+      _saveScrollPosition();
+    });
+    if (_visibleChapterTimer != null) return;
+    _visibleChapterTimer = Timer(const Duration(milliseconds: 300), () {
+      _visibleChapterTimer = null;
+      _updateVisibleChapter();
+    });
 
     if (_scrollController.hasClients) {
       final currentOffset = _scrollController.offset;
@@ -631,7 +688,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
     if (_settings.pageMode == ReaderPageMode.continuousScroll &&
         _scrollController.hasClients &&
-        !_isAppendingChapter) {
+        !_isAppendingChapter &&
+        !_isPrependingChapter) {
       final maxScroll = _scrollController.position.maxScrollExtent;
       final currentScroll = _scrollController.position.pixels;
       if (maxScroll - currentScroll < 300) {
@@ -687,10 +745,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   void _switchChapter(int chapterIndex) {
     if (_visibleChapterIndex == chapterIndex) return;
     _visibleChapterIndex = chapterIndex;
-    if (_cachedChapters != null &&
-        chapterIndex < _cachedChapters!.length) {
-      _chapterUrl =
-          _cachedChapters![chapterIndex]['url'] as String? ?? '';
+    if (_cachedChapters != null && chapterIndex < _cachedChapters!.length) {
+      _chapterUrl = _cachedChapters![chapterIndex]['url'] as String? ?? '';
     }
     setState(() {});
   }
@@ -699,10 +755,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     if (!_scrollController.hasClients || _chapterContent.isEmpty) return;
     try {
       final dbPath = await ref.read(dbPathProvider.future);
+      final idx = _settings.pageMode == ReaderPageMode.continuousScroll
+          ? _visibleChapterIndex
+          : _currentIndex;
       await rust_api.saveReadingProgress(
         dbPath: dbPath,
         bookId: widget.bookId,
-        chapterIndex: _currentIndex,
+        chapterIndex: idx,
         paragraphIndex: 0,
         offset: _scrollController.offset.toInt(),
       );
@@ -774,7 +833,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     } catch (_) {}
   }
 
-  void _preloadAdjacentContent(int currentIndex, List<Map<String, dynamic>> chapters) {
+  void _preloadAdjacentContent(
+      int currentIndex, List<Map<String, dynamic>> chapters) {
     final prevIndex = currentIndex - 1;
     if (prevIndex >= 0) {
       final prevContent = chapters[prevIndex]['content'] as String?;
@@ -800,7 +860,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 
   Future<void> _refreshChapter() async {
-    print('[CHANGE_SOURCE] _refreshChapter called, _cachedChapters=${_cachedChapters?.length ?? "null"}');
     if (_cachedChapters == null || _cachedChapters!.isEmpty) return;
     final index = _currentIndex;
     final chapters = _cachedChapters!;
@@ -911,8 +970,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   void _toggleNightMode() {
     final s = _settings.copyWith(nightMode: !_settings.nightMode);
-    setState(() => _settings = s);
-    saveReaderSettingsToDisk(s);
+    _setReaderSettings(s, persist: true);
   }
 
   void _navigateToChapter(int index, List<Map<String, dynamic>> chapters) {
@@ -1044,6 +1102,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   @override
   Widget build(BuildContext context) {
+    final providerSettings = ref.watch(readerSettingsProvider);
+    if (_readerSettingsLoaded && providerSettings != _settings) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ref.read(readerSettingsProvider) != _settings) {
+          _setReaderSettings(ref.read(readerSettingsProvider));
+        }
+      });
+    }
+
     if (widget.bookId.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('阅读器')),
@@ -1066,7 +1133,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
             body: const Center(child: Text('暂无章节')),
           );
         }
-        if (_cachedChapters != null) {
+        if (_isLoadingContent || _chapterContent.isNotEmpty) {
           return _buildReaderView();
         }
         return _buildChapterList(chapters);
@@ -1116,14 +1183,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final bgColor = Color(settings.effectiveBackgroundColor);
     final contentLocked = _controlsVisible || _isSearching;
 
-    if (isContinuous && _loadedChapters.isEmpty && _chapterContent.isNotEmpty) {
-      final title = _currentIndex < chapters.length
-          ? (chapters[_currentIndex]['title'] as String? ?? '')
-          : '';
-      _loadedChapters = [_LoadedChapter(_currentIndex, title, _chapterContent)];
-      _cachedContinuousItems = null;
-    }
-
     final showInfoBars = settings.showReadingInfo;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -1163,7 +1222,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                                   _onPageChapterBoundary(PageDirection.prev);
                                 }
                                 return;
-                              } else if (details.localPosition.dx > width * 2 / 3) {
+                              } else if (details.localPosition.dx >
+                                  width * 2 / 3) {
                                 if (!pvc.goToNextPage()) {
                                   _onPageChapterBoundary(PageDirection.next);
                                 }
@@ -1177,7 +1237,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                             if (details.localPosition.dx < width / 3) {
                               _goToPrevChapter();
                               return;
-                            } else if (details.localPosition.dx > width * 2 / 3) {
+                            } else if (details.localPosition.dx >
+                                width * 2 / 3) {
                               _goToNextChapter();
                               return;
                             }
@@ -1203,8 +1264,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                         ),
                       ),
                     if (_controlsVisible)
-                      _buildTopControls(
-                          context, chapters, hasPrev, hasNext),
+                      _buildTopControls(context, chapters, hasPrev, hasNext),
                     if (_controlsVisible)
                       _buildBottomControls(
                           context, chapters, hasPrev, hasNext, settings),
@@ -1213,8 +1273,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   ],
                 ),
               ),
-              if (showInfoBars)
-                _buildReadingInfoFooter(chapters, settings),
+              if (showInfoBars) _buildReadingInfoFooter(chapters, settings),
             ],
           ),
         ),
@@ -1260,7 +1319,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         Color(settings.effectiveTextColor).withValues(alpha: 0.15);
     final items = _buildContinuousItemList();
 
-    return ListView.builder(key: _listViewKey,
+    return ListView.builder(
+      key: _listViewKey,
       controller: _scrollController,
       physics: const BouncingScrollPhysics(),
       padding: EdgeInsets.symmetric(
@@ -1283,10 +1343,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         if (item.isTitle) {
           final globalChIndex = _loadedChapters[item.chapterIndex].index;
           return Padding(
-            key: _chapterTitleKeys.putIfAbsent(globalChIndex, () => GlobalKey()),
+            key:
+                _chapterTitleKeys.putIfAbsent(globalChIndex, () => GlobalKey()),
             padding: EdgeInsets.only(bottom: settings.verticalPadding),
-            child:
-                Text(_loadedChapters[item.chapterIndex].title, style: titleStyle),
+            child: Text(_loadedChapters[item.chapterIndex].title,
+                style: titleStyle),
           );
         }
         if (item.isDivider) {
@@ -1307,8 +1368,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   Widget _buildPageBody(ReaderSettings settings) {
     if (_chapterContent.isEmpty && _isLoadingContent) {
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2));
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
     if (_pageViewController == null) {
       return const Center(child: Text('加载中...'));
@@ -1333,8 +1393,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       decoration: TextDecoration.none,
     );
     if (_chapterContent.isEmpty && _isLoadingContent) {
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2));
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
     final paragraphs = _chapterContent
         .split(RegExp(r'\n+'))
@@ -1363,7 +1422,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 
   Future<void> _loadPageModeChapter(int targetIndex) async {
-    if (_cachedChapters == null || targetIndex < 0 || targetIndex >= _cachedChapters!.length) return;
+    if (_cachedChapters == null ||
+        targetIndex < 0 ||
+        targetIndex >= _cachedChapters!.length) return;
     final chapters = _cachedChapters!;
     final isPrev = targetIndex < _currentIndex;
 
@@ -1389,7 +1450,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         _isLoadingContent = false;
       });
       _pageViewController?.updateSettings(_settings);
-      _pageViewController?.loadChapter(targetIndex, title, content, jumpToLast: isPrev);
+      _pageViewController?.loadChapter(targetIndex, title, content,
+          jumpToLast: isPrev);
       _preloadAdjacentContent(targetIndex, chapters);
     } catch (e) {
       if (mounted) setState(() => _isLoadingContent = false);
@@ -1398,7 +1460,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   void _onPageChapterBoundary(PageDirection dir) {
     if (_cachedChapters == null) return;
-    if (dir == PageDirection.next && _currentIndex < _cachedChapters!.length - 1) {
+    if (dir == PageDirection.next &&
+        _currentIndex < _cachedChapters!.length - 1) {
       _loadPageModeChapter(_currentIndex + 1);
     } else if (dir == PageDirection.prev && _currentIndex > 0) {
       _loadPageModeChapter(_currentIndex - 1);
@@ -1425,7 +1488,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     );
 
     if (result != null && mounted) {
-      print('[CHANGE_SOURCE] Dialog returned: sourceId=${result.sourceId} sourceName=${result.sourceName} chapters=${result.chapters.length}');
       await _replaceBookSource(result);
     }
   }
@@ -1433,13 +1495,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   Future<void> _replaceBookSource(ChangeSourceResult result) async {
     if (!mounted) return;
     final savedIndex = _currentIndex;
-    print('[CHANGE_SOURCE] _replaceBookSource start: savedIndex=$savedIndex newSourceId=${result.sourceId} newSourceName=${result.sourceName}');
     final book = await ref.read(bookByIdProvider(widget.bookId).future);
     if (!mounted || book == null) {
-      print('[CHANGE_SOURCE] _replaceBookSource ABORT: mounted=$mounted bookNull=${book==null}');
       return;
     }
-    print('[CHANGE_SOURCE] book loaded: bookSourceId=${book['source_id']} bookSourceName=${book['source_name']}');
 
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final dbPath = await ref.read(dbPathProvider.future);
@@ -1510,19 +1569,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       updatedBook['latest_chapter_title'] = chapters.last['title'];
     }
     if (result.bookInfo != null) {
-      updatedBook['cover_url'] = result.bookInfo!['cover_url'] ?? book['cover_url'];
+      updatedBook['cover_url'] =
+          result.bookInfo!['cover_url'] ?? book['cover_url'];
       updatedBook['intro'] = result.bookInfo!['intro'] ?? book['intro'];
       updatedBook['author'] = result.bookInfo!['author'] ?? book['author'];
     }
     updatedBook['updated_at'] = now;
 
     await rust_api.saveBook(dbPath: dbPath, bookJson: jsonEncode(updatedBook));
-    print('[CHANGE_SOURCE] saveBook done: newSourceId=${result.sourceId} newSourceName=${result.sourceName} savedChapters=$savedCount');
 
     ref.invalidate(allBooksProvider);
     ref.invalidate(bookByIdProvider(widget.bookId));
     ref.invalidate(bookChaptersProvider(widget.bookId));
-    print('[CHANGE_SOURCE] providers invalidated: allBooks bookById bookChapters');
 
     _chapterRequestId++;
     final requestId = _chapterRequestId;
@@ -1536,7 +1594,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
     try {
       final chapterUrl = chapters[targetIndex]['url'] as String? ?? '';
-      print('[CHANGE_SOURCE] loading content: sourceId=${result.sourceId} targetIndex=$targetIndex chapterUrl=$chapterUrl');
       final json = await rust_api.getChapterContentWithSourceFromDb(
         dbPath: dbPath,
         sourceId: result.sourceId,
@@ -1552,7 +1609,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
             final platformRequest = data['platform_request'];
             if (platformRequest is Map) {
               content = await _executePlatformRequest(
-                PlatformRequest.fromJson(Map<String, dynamic>.from(platformRequest)),
+                PlatformRequest.fromJson(
+                    Map<String, dynamic>.from(platformRequest)),
               );
             } else {
               content = data['content'] as String? ?? '（无内容）';
@@ -1595,7 +1653,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       setState(() {
         _chapterContent = content;
         _isLoadingContent = false;
-        print('[CHANGE_SOURCE] content loaded OK: contentLen=${content.length}');
         if (_settings.pageMode == ReaderPageMode.continuousScroll) {
           _loadedChapters = [_LoadedChapter(targetIndex, title, content)];
           _cachedContinuousItems = null;
@@ -1605,7 +1662,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         }
       });
     } catch (e) {
-      print('[CHANGE_SOURCE] content load FAILED: $e');
       if (mounted && requestId == _chapterRequestId) {
         setState(() {
           _chapterContent = '换源后加载失败: $e';
@@ -1671,7 +1727,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   void _scrollToSearchMatch() {
     if (_currentSearchMatchIndex < 0 ||
         _currentSearchMatchIndex >= _searchMatches.length) return;
-    // This is a best-effort scroll; the exact position will depend on the body layout
+    if (!_scrollController.hasClients) return;
     final match = _searchMatches[_currentSearchMatchIndex];
     final estimatedOffset =
         200.0 * (match.chapterIdx * 50 + match.paragraphIdx);
@@ -1719,13 +1775,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         }
       }
       if (!langOk) {
-        debugPrint('[TTS] No Chinese language matched. Using default engine voice.');
+        debugPrint(
+            '[TTS] No Chinese language matched. Using default engine voice.');
       }
-      final rateResult =
-          await _flutterTts.setSpeechRate(_settings.ttsSpeed);
+      final rateResult = await _flutterTts.setSpeechRate(_settings.ttsSpeed);
       debugPrint('[TTS] setSpeechRate returned: $rateResult');
       _flutterTts.setCompletionHandler(() {
-        debugPrint('[TTS] Completion handler called');
         if (mounted && _isSpeaking) {
           _ttsNextParagraph();
         }
@@ -1765,7 +1820,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       return;
     }
     final text = paragraphs[_ttsParagraphIndex];
-    debugPrint('[TTS] Speaking paragraph $_ttsParagraphIndex: "${text.length > 30 ? text.substring(0, 30) : text}..."');
+    debugPrint(
+        '[TTS] Speaking paragraph $_ttsParagraphIndex: "${text.length > 30 ? text.substring(0, 30) : text}..."');
     final result = await _flutterTts.speak(text);
     debugPrint('[TTS] speak() result: $result');
   }
@@ -1796,10 +1852,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   void _cycleTtsSpeed() {
     const speeds = [0.3, 0.5, 0.7, 0.8, 0.9, 1.0];
     final idx = speeds.indexOf(_settings.ttsSpeed);
-    final next = speeds[(idx < 0 ? speeds.length - 1 : (idx + 1) % speeds.length)];
+    final next =
+        speeds[(idx < 0 ? speeds.length - 1 : (idx + 1) % speeds.length)];
     final s = _settings.copyWith(ttsSpeed: next);
-    setState(() => _settings = s);
-    saveReaderSettingsToDisk(s);
+    _setReaderSettings(s, persist: true);
     if (_isSpeaking) {
       _flutterTts.setSpeechRate(next);
     }
@@ -1991,10 +2047,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                         _isSpeaking && !_isPaused
                             ? Icons.pause
                             : Icons.play_arrow,
-                        color: fgColor, size: 20),
-                    onPressed: _isSpeaking && !_isPaused
-                        ? _pauseTts
-                        : _resumeTts,
+                        color: fgColor,
+                        size: 20),
+                    onPressed:
+                        _isSpeaking && !_isPaused ? _pauseTts : _resumeTts,
                     padding: EdgeInsets.zero,
                     constraints:
                         const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -2008,7 +2064,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   ),
                   Expanded(
                     child: Text(
-                      'µ£ŚĶ»╗õĖŁ ${_ttsParagraphIndex + 1}/${paragraphs.length}',
+                      '朗读中 ${_ttsParagraphIndex + 1}/${paragraphs.length}',
                       style: TextStyle(
                           color: fgColor.withValues(alpha: 0.6),
                           fontSize: 12,
@@ -2101,8 +2157,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                     Expanded(
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
-                        child:
-                            Text(titleText, style: titleStyle, maxLines: 1),
+                        child: Text(titleText, style: titleStyle, maxLines: 1),
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -2114,16 +2169,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                       },
                       tooltip: '换源',
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                          minWidth: 36, minHeight: 36),
+                      constraints:
+                          const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
                     IconButton(
                       icon: Icon(Icons.refresh, color: fgColor),
                       onPressed: _refreshChapter,
                       tooltip: '刷新',
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                          minWidth: 36, minHeight: 36),
+                      constraints:
+                          const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
                     IconButton(
                       icon: Icon(Icons.download, color: fgColor),
@@ -2133,14 +2188,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                       },
                       tooltip: '缓存',
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                          minWidth: 36, minHeight: 36),
+                      constraints:
+                          const BoxConstraints(minWidth: 36, minHeight: 36),
                     ),
                     PopupMenuButton<String>(
                       icon: Icon(Icons.more_vert, color: fgColor),
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                          minWidth: 36, minHeight: 36),
+                      constraints:
+                          const BoxConstraints(minWidth: 36, minHeight: 36),
                       onSelected: (v) {
                         if (v == 'bookmark') {
                           _toggleControls();
@@ -2184,7 +2239,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                       Expanded(
                         child: GestureDetector(
                           onTap: () {
-                            if (_sourceUrl.isNotEmpty || chapterUrl.isNotEmpty) {
+                            if (_sourceUrl.isNotEmpty ||
+                                chapterUrl.isNotEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('打开原网页 — 功能开发中')),
                               );
@@ -2193,20 +2249,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                           onLongPress: () {
                             showMenu<String>(
                               context: context,
-                              position: RelativeRect.fromLTRB(
-                                  100, 300, 100, 300),
+                              position:
+                                  RelativeRect.fromLTRB(100, 300, 100, 300),
                               items: [
                                 const PopupMenuItem(
                                   value: 'login',
                                   child: Text('登录书源 — 开发中',
-                                      style:
-                                          TextStyle(color: Colors.grey)),
+                                      style: TextStyle(color: Colors.grey)),
                                 ),
                                 const PopupMenuItem(
                                   value: 'edit',
                                   child: Text('编辑书源 — 开发中',
-                                      style:
-                                          TextStyle(color: Colors.grey)),
+                                      style: TextStyle(color: Colors.grey)),
                                 ),
                               ],
                             );
@@ -2239,8 +2293,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                         onTap: () {
                           if (chapterUrl.isNotEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('打开原网页 — 功能开发中')),
+                              const SnackBar(content: Text('打开原网页 — 功能开发中')),
                             );
                           }
                         },
@@ -2250,8 +2303,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                           child: Text(
                             sourceName,
                             style: infoSmall.copyWith(
-                                color: fgColor,
-                                fontWeight: FontWeight.w500),
+                                color: fgColor, fontWeight: FontWeight.w500),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -2280,7 +2332,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final maxChapter = (chapters.length - 1).toDouble();
     final maxChapterClamped = maxChapter < 0 ? 0.0 : maxChapter;
     final smallLabelStyle = TextStyle(
-        color: fgColor.withValues(alpha: 0.7), fontSize: 10,
+        color: fgColor.withValues(alpha: 0.7),
+        fontSize: 10,
         decoration: TextDecoration.none);
     return Positioned(
       bottom: 0,
@@ -2305,7 +2358,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                       _fabButton(
                           _isAutoScrolling ? Icons.pause : Icons.play_arrow,
                           _isAutoScrolling ? '暂停' : '自动',
-                          fgColor, smallLabelStyle, () {
+                          fgColor,
+                          smallLabelStyle, () {
                         _toggleControls();
                         _toggleAutoScroll();
                       }),
@@ -2314,9 +2368,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                               ? Icons.wb_sunny
                               : Icons.nightlight_round,
                           _settings.nightMode ? '日间' : '夜间',
-                          fgColor, smallLabelStyle, _toggleNightMode),
-                      _fabButton(Icons.find_replace, '替换', fgColor,
-                          smallLabelStyle, () {
+                          fgColor,
+                          smallLabelStyle,
+                          _toggleNightMode),
+                      _fabButton(
+                          Icons.find_replace, '替换', fgColor, smallLabelStyle,
+                          () {
                         _toggleControls();
                         context.push('/replace-rules');
                       }),
@@ -2337,9 +2394,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                               .clamp(0, maxChapterClamped),
                           min: 0,
                           max: maxChapterClamped,
-                          divisions: chapters.length > 1
-                              ? chapters.length - 1
-                              : 1,
+                          divisions:
+                              chapters.length > 1 ? chapters.length - 1 : 1,
                           activeColor: fgColor,
                           inactiveColor: fgColor.withValues(alpha: 0.25),
                           thumbColor: fgColor,
@@ -2378,15 +2434,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _toolbarButton(Icons.list, '目录', fgColor,
-                          smallLabelStyle, _showDirectorySheet),
+                      _toolbarButton(Icons.list, '目录', fgColor, smallLabelStyle,
+                          _showDirectorySheet),
                       _toolbarButton(Icons.record_voice_over, '朗读', fgColor,
                           smallLabelStyle, () {
                         _toggleControls();
                         _startTts();
                       }),
-                      _toolbarButton(Icons.tune, '界面', fgColor,
-                          smallLabelStyle, _showReaderSettings),
+                      _toolbarButton(Icons.tune, '界面', fgColor, smallLabelStyle,
+                          _showReaderSettings),
                     ],
                   ),
                 ],
@@ -2448,8 +2504,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       builder: (ctx) => _ReaderSettingsSheet(
         settings: _settings,
         onChanged: (s) {
-          setState(() => _settings = s);
-          saveReaderSettingsToDisk(s);
+          _setReaderSettings(s, persist: true);
         },
       ),
     );
@@ -2680,7 +2735,9 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
               RadioGroup<ReaderPageMode>(
                 groupValue: _s.pageMode,
                 onChanged: (v) {
-                  _update(_s.copyWith(pageMode: v));
+                  if (v != null) {
+                    _update(_s.copyWith(pageMode: v));
+                  }
                 },
                 child: Column(
                   children: ReaderPageMode.values
@@ -2697,21 +2754,28 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
               ),
               if (_s.pageMode == ReaderPageMode.page)
                 Padding(
-                  padding: const EdgeInsets.only(left: 32, top: 4),
-                  child: Text('翻页动画',
-                      style: TextStyle(
-                          color: Theme.of(ctx).primaryColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600))),
+                    padding: const EdgeInsets.only(left: 32, top: 4),
+                    child: Text('翻页动画',
+                        style: TextStyle(
+                            color: Theme.of(ctx).primaryColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600))),
               if (_s.pageMode == ReaderPageMode.page)
                 SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 0, label: Text('无', style: TextStyle(fontSize: 12))),
-                    ButtonSegment(value: 2, label: Text('覆盖', style: TextStyle(fontSize: 12))),
-                    ButtonSegment(value: 3, label: Text('平移', style: TextStyle(fontSize: 12))),
+                    ButtonSegment(
+                        value: 0,
+                        label: Text('无', style: TextStyle(fontSize: 12))),
+                    ButtonSegment(
+                        value: 2,
+                        label: Text('覆盖', style: TextStyle(fontSize: 12))),
+                    ButtonSegment(
+                        value: 3,
+                        label: Text('平移', style: TextStyle(fontSize: 12))),
                   ],
                   selected: {_s.pageAnim},
-                  onSelectionChanged: (v) => _update(_s.copyWith(pageAnim: v.first)),
+                  onSelectionChanged: (v) =>
+                      _update(_s.copyWith(pageAnim: v.first)),
                 ),
             ]),
       ),

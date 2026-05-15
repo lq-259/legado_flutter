@@ -3,12 +3,12 @@
 //! 提供书源相关的数据库操作。
 //! 对应原 Legado 的 BookSource 实体操作 (data/entities/BookSource.kt)
 
-use rusqlite::{Connection, Result as SqlResult, params};
+use super::models::BookSource;
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
 use serde::Deserialize;
 use tracing::{debug, info};
 use uuid::Uuid;
-use chrono::Utc;
-use super::models::BookSource;
 
 /// 书源 DAO
 pub struct SourceDao<'a> {
@@ -24,7 +24,7 @@ impl<'a> SourceDao<'a> {
     /// 插入或更新书源，返回实际写入的 ID（URL 去重时可能与 source.id 不同）
     pub fn upsert(&self, source: &BookSource) -> SqlResult<String> {
         debug!("插入/更新书源: {} ({})", source.name, source.url);
-        
+
         // Handle URL uniqueness: if a different source already has this URL,
         // merge into that record to preserve book->source foreign keys.
         let effective_id: String = match self.conn.query_row(
@@ -36,7 +36,7 @@ impl<'a> SourceDao<'a> {
             Err(rusqlite::Error::QueryReturnedNoRows) => source.id.clone(),
             Err(e) => return Err(e),
         };
-        
+
         self.conn.execute(
             "INSERT INTO book_sources (
                 id, name, url, source_type, group_name, enabled, custom_order, weight,
@@ -93,7 +93,7 @@ impl<'a> SourceDao<'a> {
                 source.updated_at,
             ],
         )?;
-        
+
         Ok(effective_id)
     }
 
@@ -107,9 +107,9 @@ impl<'a> SourceDao<'a> {
                      created_at, updated_at
               FROM book_sources WHERE id = ?"
         )?;
-        
+
         let mut rows = stmt.query(params![id])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(book_source_from_row(row)?))
         } else {
@@ -127,7 +127,7 @@ impl<'a> SourceDao<'a> {
                      created_at, updated_at
               FROM book_sources WHERE enabled = 1 ORDER BY custom_order ASC, weight DESC"
         )?;
-        
+
         let rows = stmt.query_map([], book_source_from_row)?;
         rows.collect()
     }
@@ -142,7 +142,7 @@ impl<'a> SourceDao<'a> {
                      created_at, updated_at
               FROM book_sources ORDER BY custom_order ASC, weight DESC"
         )?;
-        
+
         let rows = stmt.query_map([], book_source_from_row)?;
         rows.collect()
     }
@@ -157,9 +157,9 @@ impl<'a> SourceDao<'a> {
                      created_at, updated_at
               FROM book_sources WHERE url = ?"
         )?;
-        
+
         let mut rows = stmt.query(params![url])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(book_source_from_row(row)?))
         } else {
@@ -170,7 +170,8 @@ impl<'a> SourceDao<'a> {
     /// 删除书源
     pub fn delete(&self, id: &str) -> SqlResult<()> {
         info!("删除书源: {}", id);
-        self.conn.execute("DELETE FROM book_sources WHERE id = ?", params![id])?;
+        self.conn
+            .execute("DELETE FROM book_sources WHERE id = ?", params![id])?;
         Ok(())
     }
 
@@ -178,7 +179,8 @@ impl<'a> SourceDao<'a> {
     pub fn delete_batch(&self, ids: &[String]) -> SqlResult<()> {
         info!("批量删除 {} 个书源", ids.len());
         for id in ids {
-            self.conn.execute("DELETE FROM book_sources WHERE id = ?", params![id])?;
+            self.conn
+                .execute("DELETE FROM book_sources WHERE id = ?", params![id])?;
         }
         Ok(())
     }
@@ -204,9 +206,9 @@ impl<'a> SourceDao<'a> {
     /// 批量导入书源
     pub fn batch_insert(&mut self, sources: &[BookSource]) -> SqlResult<()> {
         info!("批量导入 {} 个书源", sources.len());
-        
+
         let tx = self.conn.transaction()?;
-        
+
         for source in sources {
             // Handle URL uniqueness: if a different source already has this URL,
             // merge into that record to preserve book->source foreign keys.
@@ -219,7 +221,7 @@ impl<'a> SourceDao<'a> {
                 Err(rusqlite::Error::QueryReturnedNoRows) => source.id.clone(),
                 Err(e) => return Err(e),
             };
-            
+
             tx.execute(
                 "INSERT INTO book_sources (
                     id, name, url, source_type, group_name, enabled, custom_order, weight,
@@ -277,7 +279,7 @@ impl<'a> SourceDao<'a> {
                 ],
             )?;
         }
-        
+
         tx.commit()?;
         Ok(())
     }
@@ -290,13 +292,14 @@ impl<'a> SourceDao<'a> {
         // Try internal storage format first
         if let Ok(sources) = serde_json::from_str::<Vec<BookSource>>(json) {
             let count = sources.len();
-            self.batch_insert(&sources).map_err(|e| format!("批量插入书源失败: {}", e))?;
+            self.batch_insert(&sources)
+                .map_err(|e| format!("批量插入书源失败: {}", e))?;
             return Ok(count);
         }
 
         // Try real-world Legado export format
-        let legado_sources: Vec<LegadoBookSource> = serde_json::from_str(json)
-            .map_err(|e| format!("解析Legado书源JSON失败: {}", e))?;
+        let legado_sources: Vec<LegadoBookSource> =
+            serde_json::from_str(json).map_err(|e| format!("解析Legado书源JSON失败: {}", e))?;
 
         let mut sources = Vec::with_capacity(legado_sources.len());
         for s in &legado_sources {
@@ -304,16 +307,13 @@ impl<'a> SourceDao<'a> {
         }
 
         let count = sources.len();
-        self.batch_insert(&sources).map_err(|e| format!("批量插入书源失败: {}", e))?;
+        self.batch_insert(&sources)
+            .map_err(|e| format!("批量插入书源失败: {}", e))?;
         Ok(count)
     }
 
     /// 创建新书源（便捷函数）
-    pub fn create(
-        &self,
-        name: &str,
-        url: &str,
-    ) -> SqlResult<BookSource> {
+    pub fn create(&self, name: &str, url: &str) -> SqlResult<BookSource> {
         let now = Utc::now().timestamp();
         let source = BookSource {
             id: Uuid::new_v4().to_string(),
@@ -340,7 +340,7 @@ impl<'a> SourceDao<'a> {
             created_at: now,
             updated_at: now,
         };
-        
+
         let effective_id = self.upsert(&source)?;
         if effective_id == source.id {
             Ok(source)
@@ -421,14 +421,19 @@ struct LegadoBookSource {
     book_url_pattern: Option<String>,
     #[serde(rename = "enabledExplore", default = "default_true")]
     enabled_explore: bool,
-    #[serde(rename = "lastUpdateTime", default, deserialize_with = "deser_flexible_i64")]
+    #[serde(
+        rename = "lastUpdateTime",
+        default,
+        deserialize_with = "deser_flexible_i64"
+    )]
     last_update_time: i64,
     #[serde(rename = "bookSourceComment", default)]
     book_source_comment: Option<String>,
 }
 
 fn deser_flexible_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where D: serde::Deserializer<'de>
+where
+    D: serde::Deserializer<'de>,
 {
     use serde::de;
     struct Visitor;
@@ -437,18 +442,26 @@ where D: serde::Deserializer<'de>
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             f.write_str("a number or string containing a number")
         }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> { Ok(v) }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> { Ok(v as i64) }
-        fn visit_f64<E: de::Error>(self, v: f64) -> Result<i64, E> { Ok(v as i64) }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> {
+            Ok(v)
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> {
+            Ok(v as i64)
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<i64, E> {
+            Ok(v as i64)
+        }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
-            v.parse::<i64>().map_err(|_| de::Error::custom("invalid number string"))
+            v.parse::<i64>()
+                .map_err(|_| de::Error::custom("invalid number string"))
         }
     }
     deserializer.deserialize_any(Visitor)
 }
 
 fn deser_flexible_header<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where D: serde::Deserializer<'de>
+where
+    D: serde::Deserializer<'de>,
 {
     use serde::de;
     struct Visitor;
@@ -457,54 +470,87 @@ where D: serde::Deserializer<'de>
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             f.write_str("a string, object, array, or null")
         }
-        fn visit_none<E: de::Error>(self) -> Result<Option<String>, E> { Ok(None) }
-        fn visit_unit<E: de::Error>(self) -> Result<Option<String>, E> { Ok(None) }
+        fn visit_none<E: de::Error>(self) -> Result<Option<String>, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Option<String>, E> {
+            Ok(None)
+        }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Option<String>, E> {
             let s = v.to_string();
-            if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(s))
+            }
         }
         fn visit_string<E: de::Error>(self, v: String) -> Result<Option<String>, E> {
-            if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+            if v.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v))
+            }
         }
-        fn visit_map<'de, A>(self, mut map: A) -> Result<Self::Value, A::Error>
-        where A: de::MapAccess<'de>
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::MapAccess<'de>,
         {
             let mut s = String::new();
             while let Some((k, v)) = map.next_entry::<String, serde_json::Value>()? {
                 use std::fmt::Write;
-                if !s.is_empty() { s.push_str(", "); }
+                if !s.is_empty() {
+                    s.push_str(", ");
+                }
                 let _ = write!(s, "\"{}\":{}", k, v);
             }
-            if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(s))
+            }
         }
-        fn visit_seq<'de, A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where A: de::SeqAccess<'de>
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
         {
             let mut s = String::new();
             while let Some(v) = seq.next_element::<serde_json::Value>()? {
-                if !s.is_empty() { s.push_str(", "); }
+                if !s.is_empty() {
+                    s.push_str(", ");
+                }
                 use std::fmt::Write;
                 let _ = write!(s, "{}", v);
             }
-            if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(s))
+            }
         }
     }
     deserializer.deserialize_any(Visitor)
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 fn legado_to_storage(source: &LegadoBookSource) -> Result<BookSource, String> {
     let now = Utc::now().timestamp();
-    let rule_search = normalize_rule_value(
-        merge_search_url(source.rule_search.clone(), source.search_url.as_deref()),
-    );
+    let rule_search = normalize_rule_value(merge_search_url(
+        source.rule_search.clone(),
+        source.search_url.as_deref(),
+    ));
     Ok(BookSource {
         id: Uuid::new_v4().to_string(),
         name: source.name.clone(),
         url: source.url.clone(),
         source_type: source.source_type,
-        group_name: if source.group_name.is_empty() { None } else { Some(source.group_name.clone()) },
+        group_name: if source.group_name.is_empty() {
+            None
+        } else {
+            Some(source.group_name.clone())
+        },
         enabled: source.enabled,
         custom_order: source.custom_order,
         weight: source.weight,
@@ -581,10 +627,7 @@ fn normalize_legado_rule(rule: &str) -> String {
     }
 
     let (expr, suffix) = split_rule_suffix(rule);
-    let normalized = expr
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized = expr.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() && !suffix.is_empty() {
         return suffix.to_string();
     }

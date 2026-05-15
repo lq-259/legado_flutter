@@ -1,8 +1,24 @@
-use rusqlite::{Connection, Result as SqlResult, params};
+use super::models::{DownloadChapter, DownloadTask};
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
+use std::path::PathBuf;
+use std::sync::RwLock;
 use tracing::{debug, info};
 use uuid::Uuid;
-use chrono::Utc;
-use super::models::{DownloadTask, DownloadChapter};
+
+static DOWNLOAD_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+pub fn set_download_root(path: &str) {
+    if let Ok(canonical) = PathBuf::from(path).canonicalize() {
+        if let Ok(mut root) = DOWNLOAD_ROOT.write() {
+            *root = Some(canonical);
+        }
+    }
+}
+
+fn get_download_root() -> Option<PathBuf> {
+    DOWNLOAD_ROOT.read().ok()?.clone()
+}
 
 pub struct DownloadDao<'a> {
     conn: &'a Connection,
@@ -52,7 +68,7 @@ impl<'a> DownloadDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_id, book_name, cover_url, total_chapters, downloaded_chapters,
                     status, total_size, downloaded_size, error_message, created_at, updated_at
-             FROM download_tasks WHERE id = ?"
+             FROM download_tasks WHERE id = ?",
         )?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
@@ -66,7 +82,7 @@ impl<'a> DownloadDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_id, book_name, cover_url, total_chapters, downloaded_chapters,
                     status, total_size, downloaded_size, error_message, created_at, updated_at
-             FROM download_tasks WHERE book_id = ? ORDER BY created_at DESC"
+             FROM download_tasks WHERE book_id = ? ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![book_id], task_from_row)?;
         rows.collect()
@@ -76,7 +92,7 @@ impl<'a> DownloadDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_id, book_name, cover_url, total_chapters, downloaded_chapters,
                     status, total_size, downloaded_size, error_message, created_at, updated_at
-             FROM download_tasks ORDER BY created_at DESC"
+             FROM download_tasks ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], task_from_row)?;
         rows.collect()
@@ -84,12 +100,21 @@ impl<'a> DownloadDao<'a> {
 
     pub fn delete(&self, id: &str) -> SqlResult<()> {
         info!("删除下载任务: {}", id);
-        self.conn.execute("DELETE FROM download_chapters WHERE task_id = ?", params![id])?;
-        self.conn.execute("DELETE FROM download_tasks WHERE id = ?", params![id])?;
+        self.conn.execute(
+            "DELETE FROM download_chapters WHERE task_id = ?",
+            params![id],
+        )?;
+        self.conn
+            .execute("DELETE FROM download_tasks WHERE id = ?", params![id])?;
         Ok(())
     }
 
-    pub fn update_status(&self, id: &str, status: i32, error_message: Option<&str>) -> SqlResult<()> {
+    pub fn update_status(
+        &self,
+        id: &str,
+        status: i32,
+        error_message: Option<&str>,
+    ) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE download_tasks SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
             params![status, error_message, Utc::now().timestamp(), id],
@@ -97,7 +122,12 @@ impl<'a> DownloadDao<'a> {
         Ok(())
     }
 
-    pub fn update_progress(&self, id: &str, downloaded_chapters: i32, downloaded_size: i64) -> SqlResult<()> {
+    pub fn update_progress(
+        &self,
+        id: &str,
+        downloaded_chapters: i32,
+        downloaded_size: i64,
+    ) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE download_tasks SET downloaded_chapters = ?, downloaded_size = ?, updated_at = ? WHERE id = ?",
             params![downloaded_chapters, downloaded_size, Utc::now().timestamp(), id],
@@ -131,9 +161,15 @@ impl<'a> DownloadDao<'a> {
         Ok(task)
     }
 
-    pub fn create_task_with_chapters(&self, task: &DownloadTask, chapters: &[DownloadChapter]) -> SqlResult<()> {
+    pub fn create_task_with_chapters(
+        &self,
+        task: &DownloadTask,
+        chapters: &[DownloadChapter],
+    ) -> SqlResult<()> {
         self.conn.execute("BEGIN", [])?;
-        let result = self.upsert(task).and_then(|_| self.batch_create_chapters(chapters));
+        let result = self
+            .upsert(task)
+            .and_then(|_| self.batch_create_chapters(chapters));
         match result {
             Ok(()) => {
                 self.conn.execute("COMMIT", [])?;
@@ -147,10 +183,29 @@ impl<'a> DownloadDao<'a> {
     }
 
     pub fn delete_with_files(&self, id: &str) -> SqlResult<()> {
+        self.delete_with_files_in_root(id, get_download_root().as_deref())
+    }
+
+    pub fn delete_with_files_in_root(
+        &self,
+        id: &str,
+        root: Option<&std::path::Path>,
+    ) -> SqlResult<()> {
         let chapters = self.get_chapters_by_task(id)?;
+
+        let root = root.and_then(|path| path.canonicalize().ok());
+
         for ch in &chapters {
             if let Some(ref path) = ch.file_path {
-                let _ = std::fs::remove_file(path);
+                let Ok(canonical) = std::path::Path::new(path).canonicalize() else {
+                    continue;
+                };
+                if root
+                    .as_ref()
+                    .is_some_and(|root| canonical.starts_with(root))
+                {
+                    let _ = std::fs::remove_file(&canonical);
+                }
             }
         }
         self.delete(id)
@@ -189,7 +244,7 @@ impl<'a> DownloadDao<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, chapter_id, chapter_index, chapter_title,
                     status, file_path, file_size, error_message, created_at, updated_at
-             FROM download_chapters WHERE task_id = ? ORDER BY chapter_index ASC"
+             FROM download_chapters WHERE task_id = ? ORDER BY chapter_index ASC",
         )?;
         let rows = stmt.query_map(params![task_id], chapter_from_row)?;
         rows.collect()

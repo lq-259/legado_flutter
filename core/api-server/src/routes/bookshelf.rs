@@ -3,9 +3,9 @@ use axum::{
     routing::{delete, get},
     Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -31,9 +31,7 @@ pub struct AddBookResponse {
     pub chapter_count: usize,
 }
 
-async fn list_books(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+async fn list_books(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = util::open_db(&state.db_path)?;
     let dao = core_storage::book_dao::BookDao::new(&conn);
     let books = dao
@@ -54,6 +52,21 @@ async fn add_book(
     }
     if req.book_url.trim().is_empty() {
         return Err(ApiError::BadRequest("book_url 不能为空".into()));
+    }
+
+    // Validate source and URL before writing anything
+    let storage_source = {
+        let mut conn = util::open_db(&state.db_path)?;
+        let dao = core_storage::source_dao::SourceDao::new(&mut conn);
+        dao.get_by_id(&req.source_id)
+            .map_err(|e| ApiError::Database(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("书源不存在: {}", req.source_id)))?
+    };
+    let source = util::storage_to_core_source(&storage_source)?;
+    if !core_source::parser::source_matches_url(&source, &req.book_url) {
+        return Err(ApiError::BadRequest(
+            "book_url 不匹配书源的 book_url_pattern".into(),
+        ));
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -96,21 +109,6 @@ async fn add_book(
         dao.upsert(&book)
             .map_err(|e| ApiError::Database(e.to_string()))?;
     }
-
-    // Fetch and save chapters
-    let storage_source = {
-        let mut conn = util::open_db(&state.db_path)?;
-        let dao = core_storage::source_dao::SourceDao::new(&mut conn);
-        dao.get_by_id(&req.source_id)
-            .map_err(|e| ApiError::Database(e.to_string()))?
-            .ok_or_else(|| {
-                ApiError::NotFound(format!("书源不存在: {}", req.source_id))
-            })?
-    };
-    let source = util::storage_to_core_source(&storage_source)?;
-    if !core_source::parser::source_matches_url(&source, &req.book_url) {
-        return Err(ApiError::BadRequest("book_url 不匹配书源的 book_url_pattern".into()));
-    }
     // Fetch book info for toc_url and metadata
     let parser = core_source::parser::BookSourceParser::new();
     let book_info = parser.get_book_info(&source, &req.book_url).await;
@@ -121,10 +119,11 @@ async fn add_book(
     let conn = util::open_db(&state.db_path)?;
     let chapter_dao = core_storage::chapter_dao::ChapterDao::new(&conn);
     let chapter_count = chapters.len();
-    for (i, ch) in chapters.iter().enumerate() {
-        let ch_id = stable_hash(&format!("{}|{}|{}", book_id, ch.url, i));
-        let chapter = core_storage::models::Chapter {
-            id: ch_id,
+    let storage_chapters: Vec<_> = chapters
+        .iter()
+        .enumerate()
+        .map(|(i, ch)| core_storage::models::Chapter {
+            id: stable_hash(&format!("{}|{}|{}", book_id, ch.url, i)),
             book_id: book_id.clone(),
             index_num: ch.index,
             title: ch.title.clone(),
@@ -136,11 +135,11 @@ async fn add_book(
             end: 0,
             created_at: now,
             updated_at: now,
-        };
-        chapter_dao
-            .upsert(&chapter)
-            .map_err(|e| ApiError::Database(e.to_string()))?;
-    }
+        })
+        .collect();
+    chapter_dao
+        .replace_by_book_preserving_content(&book_id, &storage_chapters)
+        .map_err(|e| ApiError::Database(e.to_string()))?;
 
     // Update book chapter count
     {

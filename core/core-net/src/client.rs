@@ -7,32 +7,28 @@
 //! - 超时控制
 //! - 并发请求限制
 
+use crate::cookie::CookieManager;
+use crate::proxy::redact_proxy_credentials;
+use crate::ProxyConfig;
+use reqwest::header::{
+    HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, COOKIE, SET_COOKIE, USER_AGENT,
+};
+use reqwest::{Client, RequestBuilder, Response};
 use std::sync::Arc;
 use std::time::Duration;
-use reqwest::{Client, RequestBuilder, Response};
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, SET_COOKIE, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
-use crate::ProxyConfig;
-use crate::proxy::redact_proxy_credentials;
-use crate::cookie::CookieManager;
 
 /// HTTP 客户端配置
 #[derive(Debug, Clone)]
 pub struct HttpClientConfig {
-    /// 请求超时时间（秒）
     pub timeout_secs: u64,
-    /// 连接超时时间（秒）
     pub connect_timeout_secs: u64,
-    /// 最大并发请求数
     pub max_concurrent: usize,
-    /// 重试次数
     pub max_retries: usize,
-    /// 用户代理字符串
+    pub max_response_bytes: u64,
     pub user_agent: String,
-    /// 代理配置（可选）
     pub proxy: Option<ProxyConfig>,
-    /// Cookie 持久化文件路径（可选），设置后自动加载/保存持久化 Cookie
     pub cookie_persistence_path: Option<String>,
 }
 
@@ -43,6 +39,7 @@ impl Default for HttpClientConfig {
             connect_timeout_secs: 10,
             max_concurrent: 10,
             max_retries: 3,
+            max_response_bytes: 10 * 1024 * 1024,
             user_agent: "Legado-Flutter/0.1.0".to_string(),
             proxy: None,
             cookie_persistence_path: None,
@@ -64,8 +61,16 @@ impl HttpClient {
     pub fn new(config: HttpClientConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_str(&config.user_agent)?);
-        headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"));
-        headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"));
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        );
+        headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"),
+        );
 
         let mut builder = Client::builder()
             .default_headers(headers)
@@ -103,6 +108,10 @@ impl HttpClient {
         })
     }
 
+    pub fn config(&self) -> &HttpClientConfig {
+        &self.config
+    }
+
     /// 发起 GET 请求（带重试，自动管理 Cookie）
     pub async fn get(&self, url: &str) -> Result<Response, reqwest::Error> {
         self.request_with_retry(url, || self.client.get(url)).await
@@ -110,7 +119,8 @@ impl HttpClient {
 
     /// 发起 POST 请求（带重试，自动管理 Cookie）
     pub async fn post(&self, url: &str, body: String) -> Result<Response, reqwest::Error> {
-        self.request_with_retry(url, move || self.client.post(url).body(body.clone())).await
+        self.request_with_retry(url, move || self.client.post(url).body(body.clone()))
+            .await
     }
 
     /// 注入 Cookie 到请求头
@@ -150,7 +160,11 @@ impl HttpClient {
     }
 
     /// 带重试的请求执行（指数退避），自动管理 Cookie 注入和提取
-    async fn request_with_retry<F>(&self, url: &str, request_fn: F) -> Result<Response, reqwest::Error>
+    async fn request_with_retry<F>(
+        &self,
+        url: &str,
+        request_fn: F,
+    ) -> Result<Response, reqwest::Error>
     where
         F: Fn() -> RequestBuilder + Clone,
     {
@@ -160,7 +174,10 @@ impl HttpClient {
         loop {
             // NOTE: The Semaphore is never closed during HttpClient's lifetime,
             // so this .expect() only panics on a programming error.
-            let permit = self.semaphore.acquire().await
+            let permit = self
+                .semaphore
+                .acquire()
+                .await
                 .expect("Semaphore closed unexpectedly");
 
             debug!("发起请求，重试次数: {}/{}", retries, max_retries);
@@ -175,9 +192,10 @@ impl HttpClient {
                         return Ok(resp);
                     } else if resp.status().is_server_error() && retries < max_retries {
                         retries += 1;
-                        warn!("服务器错误 {}，将在 {}ms 后重试", resp.status(), 100 * 2u64.pow(retries as u32));
+                        let backoff_ms = retry_backoff_ms(retries as u32);
+                        warn!("服务器错误 {}，将在 {}ms 后重试", resp.status(), backoff_ms);
                         drop(permit);
-                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retries as u32))).await;
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                         continue;
                     } else {
                         drop(permit);
@@ -187,9 +205,10 @@ impl HttpClient {
                 Err(e) => {
                     if retries < max_retries && (e.is_timeout() || e.is_connect()) {
                         retries += 1;
-                        warn!("请求失败: {}，将在 {}ms 后重试", e, 100 * 2u64.pow(retries as u32));
+                        let backoff_ms = retry_backoff_ms(retries as u32);
+                        warn!("请求失败: {}，将在 {}ms 后重试", e, backoff_ms);
                         drop(permit);
-                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retries as u32))).await;
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                         continue;
                     } else {
                         drop(permit);
@@ -202,18 +221,27 @@ impl HttpClient {
 
     /// 获取文本内容（自动处理编码）
     pub async fn get_text(&self, url: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self.get(url).await?;
+        let mut response = self.get(url).await?;
 
-        // 先提取编码信息，再消费 response 读取 body
         let encoding = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .and_then(parse_charset);
 
-        let bytes = response.bytes().await?;
+        let max = self.config.max_response_bytes as usize;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("读取响应失败: {}", e))?
+        {
+            if bytes.len() + chunk.len() > max {
+                return Err(format!("响应体超过上限 {} 字节", max).into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
 
-        // 使用 encoding_rs 处理中文编码
         let text = if let Some(enc) = encoding {
             match enc.to_lowercase().as_str() {
                 "gbk" | "gb2312" | "gb18030" => {
@@ -227,9 +255,8 @@ impl HttpClient {
                 _ => String::from_utf8_lossy(&bytes).to_string(),
             }
         } else {
-            // 尝试自动检测 BOM
-            let (encoding, bom_len) = encoding_rs::Encoding::for_bom(&bytes)
-                .unwrap_or((encoding_rs::UTF_8, 0));
+            let (encoding, bom_len) =
+                encoding_rs::Encoding::for_bom(&bytes).unwrap_or((encoding_rs::UTF_8, 0));
             let (text, _, _) = encoding.decode(&bytes[bom_len..]);
             text.into_owned()
         };
@@ -238,11 +265,20 @@ impl HttpClient {
     }
 
     /// 获取 JSON 内容
-    pub async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, Box<dyn std::error::Error>> {
+    pub async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+    ) -> Result<T, Box<dyn std::error::Error>> {
         let response = self.get(url).await?;
         let json = response.json::<T>().await?;
         Ok(json)
     }
+}
+
+fn retry_backoff_ms(retries: u32) -> u64 {
+    100u64
+        .saturating_mul(2u64.saturating_pow(retries))
+        .min(30_000)
 }
 
 /// 便捷函数：创建默认 HttpClient
@@ -252,17 +288,14 @@ pub fn create_client() -> Result<HttpClient, Box<dyn std::error::Error>> {
 
 /// 从 Content-Type 头解析 charset
 fn parse_charset(content_type: &str) -> Option<String> {
-    content_type
-        .split(';')
-        .map(str::trim)
-        .find_map(|part| {
-            let (key, value) = part.split_once('=')?;
-            if key.eq_ignore_ascii_case("charset") {
-                Some(value.trim_matches('"').to_ascii_lowercase())
-            } else {
-                None
-            }
-        })
+    content_type.split(';').map(str::trim).find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        if key.eq_ignore_ascii_case("charset") {
+            Some(value.trim_matches('"').to_ascii_lowercase())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -283,13 +316,22 @@ mod tests {
         };
         let client1 = HttpClient::new(config.clone()).unwrap();
 
-        client1.cookie_manager().add_cookie("lifecycle=test; Max-Age=3600", "https://example.com").unwrap();
-        client1.cookie_manager().add_cookie("session=abc", "https://example.com").unwrap();
+        client1
+            .cookie_manager()
+            .add_cookie("lifecycle=test; Max-Age=3600", "https://example.com")
+            .unwrap();
+        client1
+            .cookie_manager()
+            .add_cookie("session=abc", "https://example.com")
+            .unwrap();
         client1.save_cookies().unwrap();
 
         // 创建 client2，加载持久化 cookie，验证生命周期
         let client2 = HttpClient::new(config).unwrap();
-        let cookies = client2.cookie_manager().get_cookies("https://example.com").unwrap();
+        let cookies = client2
+            .cookie_manager()
+            .get_cookies("https://example.com")
+            .unwrap();
         assert!(cookies.contains("lifecycle=test"));
 
         // 验证持久化文件可以再次写入
@@ -301,7 +343,10 @@ mod tests {
     #[test]
     fn test_http_client_no_persist_path() {
         let client = HttpClient::new(HttpClientConfig::default()).unwrap();
-        client.cookie_manager().add_cookie("x=1", "https://example.com").unwrap();
+        client
+            .cookie_manager()
+            .add_cookie("x=1", "https://example.com")
+            .unwrap();
         let result = client.save_cookies();
         assert!(result.is_err());
     }
@@ -322,8 +367,15 @@ mod tests {
         let resp = client.get(&server.url("/test")).await.unwrap();
         assert_eq!(resp.status(), 200);
 
-        let cookies = client.cookie_manager().get_cookies(&server.url("/test")).unwrap();
-        assert!(cookies.contains("srv_cookie=val1"), "expected srv_cookie, got: {}", cookies);
+        let cookies = client
+            .cookie_manager()
+            .get_cookies(&server.url("/test"))
+            .unwrap();
+        assert!(
+            cookies.contains("srv_cookie=val1"),
+            "expected srv_cookie, got: {}",
+            cookies
+        );
 
         mock.assert();
     }
@@ -335,7 +387,8 @@ mod tests {
         let server = MockServer::start();
 
         let auth_mock = server.mock(|when, then| {
-            when.method(GET).path("/auth")
+            when.method(GET)
+                .path("/auth")
                 .header("Cookie", "session=abc123");
             then.status(200).body("authenticated");
         });
@@ -380,7 +433,10 @@ mod tests {
         client1.save_cookies().unwrap();
 
         let client2 = HttpClient::new(config).unwrap();
-        let cookies = client2.cookie_manager().get_cookies(&server.url("/set")).unwrap();
+        let cookies = client2
+            .cookie_manager()
+            .get_cookies(&server.url("/set"))
+            .unwrap();
         assert!(cookies.contains("persist_cookie=xyz"));
 
         mock.assert();
@@ -401,11 +457,21 @@ mod tests {
         });
 
         let client = HttpClient::new(HttpClientConfig::default()).unwrap();
-        let resp = client.post(&server.url("/submit"), "data=1".to_string()).await.unwrap();
+        let resp = client
+            .post(&server.url("/submit"), "data=1".to_string())
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
 
-        let cookies = client.cookie_manager().get_cookies(&server.url("/submit")).unwrap();
-        assert!(cookies.contains("post_cookie=val1"), "expected post_cookie, got: {}", cookies);
+        let cookies = client
+            .cookie_manager()
+            .get_cookies(&server.url("/submit"))
+            .unwrap();
+        assert!(
+            cookies.contains("post_cookie=val1"),
+            "expected post_cookie, got: {}",
+            cookies
+        );
 
         mock.assert();
     }

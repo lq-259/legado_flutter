@@ -10,14 +10,14 @@
 //! - clear_domain 通过内部 raw_cookies 跟踪实现，同时支持会话级和持久化 Cookie；
 //!   旧格式加载（raw_cookies 为空）时回退到 JSON 过滤持久化 Cookie。
 
-use std::path::Path;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use cookie_store::{CookieStore, Cookie as StoreCookie};
+use cookie_store::{Cookie as StoreCookie, CookieStore};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 
 /// Cookie 条目（用于跟踪原始 cookie 数据，包括会话级 Cookie）
@@ -53,7 +53,9 @@ impl CookieManager {
 
     /// 从文件加载持久化 Cookie
     /// 仅加载持久化 Cookie（有 Max-Age 或 Expires），不加载会话 Cookie
-    pub fn load_persistent_cookies<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_persistent_cookies<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
         debug!("从文件加载 Cookie: {:?}", path);
 
@@ -142,8 +144,7 @@ impl CookieManager {
 
         inner.raw_cookies.retain(|existing| {
             if let Ok(existing_url) = Url::parse(&existing.url) {
-                if let Ok(existing_parsed) =
-                    StoreCookie::parse(&existing.raw_cookie, &existing_url)
+                if let Ok(existing_parsed) = StoreCookie::parse(&existing.raw_cookie, &existing_url)
                 {
                     let en = existing_parsed.name().to_string();
                     let ed = match existing_parsed.domain() {
@@ -164,10 +165,16 @@ impl CookieManager {
             raw_cookie: cookie_str.to_string(),
             url: url.to_string(),
         });
-        debug!("添加 Cookie: {}",
-            cookie_str.split(';').next().unwrap_or(cookie_str)
-                .split_once('=').map(|(n,_)| format!("{}=***", n))
-                .unwrap_or_else(|| cookie_str.to_string()));
+        debug!(
+            "添加 Cookie: {}",
+            cookie_str
+                .split(';')
+                .next()
+                .unwrap_or(cookie_str)
+                .split_once('=')
+                .map(|(n, _)| format!("{}=***", n))
+                .unwrap_or_else(|| cookie_str.to_string())
+        );
 
         Ok(())
     }
@@ -208,17 +215,13 @@ impl CookieManager {
                     .into_iter()
                     .filter(|c| !cookie_json_domain_matches(c, domain))
                     .collect();
-                inner.store =
-                    serde_json::from_value(Value::Array(filtered)).unwrap_or_default();
+                inner.store = serde_json::from_value(Value::Array(filtered)).unwrap_or_default();
             }
             return;
         }
 
-        let (keep, _remove): (Vec<CookieEntry>, Vec<CookieEntry>) = inner
-            .raw_cookies
-            .iter()
-            .cloned()
-            .partition(|entry| {
+        let (keep, _remove): (Vec<CookieEntry>, Vec<CookieEntry>) =
+            inner.raw_cookies.iter().cloned().partition(|entry| {
                 let eff_domain = cookie_effective_domain(entry);
                 if eff_domain.is_empty() {
                     return true;
@@ -281,7 +284,9 @@ fn cookie_path(raw_cookie: &str) -> String {
 /// 从 URL path 推导默认 Cookie Path（用于无显式 Path 属性的 Cookie）
 fn cookie_default_path_from_url(url: &Url) -> String {
     let path = url.path();
-    if path.is_empty() { return "/".to_string(); }
+    if path.is_empty() {
+        return "/".to_string();
+    }
     match path.rfind('/') {
         Some(pos) if pos > 0 => path[..=pos].to_string(),
         _ => "/".to_string(),
@@ -301,8 +306,7 @@ fn cookie_effective_domain(entry: &CookieEntry) -> String {
 /// Cookie 域名语义匹配：eff_domain == target 或 eff_domain 是 target 的子域
 /// 避免简单 ends_with 误删 badexample.com 等后缀匹配域
 fn cookie_domain_matches(effective_domain: &str, target_domain: &str) -> bool {
-    effective_domain == target_domain
-        || effective_domain.ends_with(&format!(".{}", target_domain))
+    effective_domain == target_domain || effective_domain.ends_with(&format!(".{}", target_domain))
 }
 
 /// CookieStore JSON 中单个 Cookie 的 domain 是否匹配目标（用于旧格式回退）
@@ -339,7 +343,9 @@ mod tests {
     #[test]
     fn test_add_and_get_cookie() {
         let manager = CookieManager::default();
-        manager.add_cookie("session=abc123", "https://example.com").unwrap();
+        manager
+            .add_cookie("session=abc123", "https://example.com")
+            .unwrap();
         let cookies = manager.get_cookies("https://example.com").unwrap();
         assert!(cookies.contains("session=abc123"));
     }
@@ -347,7 +353,9 @@ mod tests {
     #[test]
     fn test_get_cookies_no_match() {
         let manager = CookieManager::default();
-        manager.add_cookie("token=xyz", "https://example.com").unwrap();
+        manager
+            .add_cookie("token=xyz", "https://example.com")
+            .unwrap();
         let cookies = manager.get_cookies("https://other.com").unwrap();
         assert_eq!(cookies, "");
     }
@@ -365,7 +373,9 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         let manager = CookieManager::default();
-        manager.add_cookie("loaded=true; Max-Age=3600", "https://example.com").unwrap();
+        manager
+            .add_cookie("loaded=true; Max-Age=3600", "https://example.com")
+            .unwrap();
 
         let path = temp_dir().join("test_cookies.json");
         manager.save_persistent_cookies(&path).unwrap();
@@ -380,7 +390,9 @@ mod tests {
     #[test]
     fn test_save_and_load_backward_compat() {
         let manager = CookieManager::default();
-        manager.add_cookie("oldformat=true; Max-Age=3600", "https://example.com").unwrap();
+        manager
+            .add_cookie("oldformat=true; Max-Age=3600", "https://example.com")
+            .unwrap();
 
         let path = temp_dir().join("test_cookies_old.json");
         // Write old format (just CookieStore JSON)
@@ -407,8 +419,12 @@ mod tests {
     #[test]
     fn test_clear_domain() {
         let manager = CookieManager::default();
-        manager.add_cookie("a=1; Domain=example.com", "https://example.com").unwrap();
-        manager.add_cookie("b=2; Domain=other.com", "https://other.com").unwrap();
+        manager
+            .add_cookie("a=1; Domain=example.com", "https://example.com")
+            .unwrap();
+        manager
+            .add_cookie("b=2; Domain=other.com", "https://other.com")
+            .unwrap();
         manager.clear_domain("example.com");
         let cookies = manager.get_cookies("https://example.com").unwrap();
         assert_eq!(cookies, "");
@@ -419,7 +435,9 @@ mod tests {
     #[test]
     fn test_clear_domain_session_cookies() {
         let manager = CookieManager::default();
-        manager.add_cookie("s1=val1", "https://example.com").unwrap();
+        manager
+            .add_cookie("s1=val1", "https://example.com")
+            .unwrap();
         manager.add_cookie("s2=val2", "https://other.com").unwrap();
         manager.clear_domain("example.com");
         let cookies = manager.get_cookies("https://example.com").unwrap();
@@ -432,11 +450,18 @@ mod tests {
     fn test_clear_domain_no_false_match() {
         let manager = CookieManager::default();
         // badexample.com 不应被清除（避免 ends_with 误删）
-        manager.add_cookie("x=1; Domain=badexample.com", "https://badexample.com").unwrap();
-        manager.add_cookie("y=2; Domain=example.com", "https://example.com").unwrap();
+        manager
+            .add_cookie("x=1; Domain=badexample.com", "https://badexample.com")
+            .unwrap();
+        manager
+            .add_cookie("y=2; Domain=example.com", "https://example.com")
+            .unwrap();
         manager.clear_domain("example.com");
         let bad_cookies = manager.get_cookies("https://badexample.com").unwrap();
-        assert!(bad_cookies.contains("x=1"), "badexample.com cookies should survive");
+        assert!(
+            bad_cookies.contains("x=1"),
+            "badexample.com cookies should survive"
+        );
         let good_cookies = manager.get_cookies("https://example.com").unwrap();
         assert_eq!(good_cookies, "", "example.com cookies should be cleared");
     }
@@ -444,13 +469,20 @@ mod tests {
     #[test]
     fn test_clear_domain_subdomain() {
         let manager = CookieManager::default();
-        manager.add_cookie("sub=1; Domain=sub.example.com", "https://sub.example.com").unwrap();
-        manager.add_cookie("main=2; Domain=example.com", "https://example.com").unwrap();
+        manager
+            .add_cookie("sub=1; Domain=sub.example.com", "https://sub.example.com")
+            .unwrap();
+        manager
+            .add_cookie("main=2; Domain=example.com", "https://example.com")
+            .unwrap();
         // 清除 example.com 应同时清除 sub.example.com（取决于 Domain 属性语义）
         // sub.example.com 的 Domain 是 sub.example.com，ends_with(".example.com") → true → 应被清除
         manager.clear_domain("example.com");
         let sub_cookies = manager.get_cookies("https://sub.example.com").unwrap();
-        assert!(sub_cookies.is_empty(), "sub.example.com should be cleared as subdomain");
+        assert!(
+            sub_cookies.is_empty(),
+            "sub.example.com should be cleared as subdomain"
+        );
         let main_cookies = manager.get_cookies("https://example.com").unwrap();
         assert_eq!(main_cookies, "");
     }
@@ -459,7 +491,9 @@ mod tests {
     fn test_clear_domain_host_only() {
         let manager = CookieManager::default();
         // 不带 Domain 属性的 host-only cookie
-        manager.add_cookie("hostonly=1", "https://example.com").unwrap();
+        manager
+            .add_cookie("hostonly=1", "https://example.com")
+            .unwrap();
         manager.add_cookie("other=2", "https://other.com").unwrap();
         manager.clear_domain("example.com");
         let cookies = manager.get_cookies("https://example.com").unwrap();
@@ -472,8 +506,12 @@ mod tests {
     fn test_old_format_clear_domain() {
         // 模拟旧格式加载后 clear_domain：raw_cookies 为空，store 有持久化 cookie
         let manager = CookieManager::default();
-        manager.add_cookie("keep=1; Max-Age=3600", "https://keep.com").unwrap();
-        manager.add_cookie("del=2; Max-Age=3600", "https://example.com").unwrap();
+        manager
+            .add_cookie("keep=1; Max-Age=3600", "https://keep.com")
+            .unwrap();
+        manager
+            .add_cookie("del=2; Max-Age=3600", "https://example.com")
+            .unwrap();
 
         // 写入旧格式（仅 CookieStore JSON）
         let path = temp_dir().join("test_old_clear.json");
@@ -504,7 +542,8 @@ mod tests {
     #[test]
     fn test_cookie_clone_and_share() {
         let m1 = CookieManager::default();
-        m1.add_cookie("shared=true; Max-Age=3600", "https://example.com").unwrap();
+        m1.add_cookie("shared=true; Max-Age=3600", "https://example.com")
+            .unwrap();
         let m2 = m1.clone();
         let cookies = m2.get_cookies("https://example.com").unwrap();
         assert!(cookies.contains("shared=true"));
@@ -515,8 +554,12 @@ mod tests {
     #[test]
     fn test_add_cookie_overwrite() {
         let manager = CookieManager::default();
-        manager.add_cookie("overwrite=old; Max-Age=3600", "https://example.com").unwrap();
-        manager.add_cookie("overwrite=new; Max-Age=3600", "https://example.com").unwrap();
+        manager
+            .add_cookie("overwrite=old; Max-Age=3600", "https://example.com")
+            .unwrap();
+        manager
+            .add_cookie("overwrite=new; Max-Age=3600", "https://example.com")
+            .unwrap();
 
         let cookies = manager.get_cookies("https://example.com").unwrap();
         assert!(cookies.contains("overwrite=new"));
@@ -526,26 +569,45 @@ mod tests {
     #[test]
     fn test_same_name_diff_path_coexist() {
         let manager = CookieManager::default();
-        manager.add_cookie("a=1; Path=/api", "https://example.com").unwrap();
-        manager.add_cookie("a=2; Path=/other", "https://example.com").unwrap();
+        manager
+            .add_cookie("a=1; Path=/api", "https://example.com")
+            .unwrap();
+        manager
+            .add_cookie("a=2; Path=/other", "https://example.com")
+            .unwrap();
 
         // cookie_store 尊重 Path 匹配: /api 路径不返回 Path=/other 的 cookie
         let api_cookies = manager.get_cookies("https://example.com/api").unwrap();
         assert!(api_cookies.contains("a=1"));
-        assert!(!api_cookies.contains("a=2"), "Path=/other should not match /api");
+        assert!(
+            !api_cookies.contains("a=2"),
+            "Path=/other should not match /api"
+        );
 
         // 两个不同 Path 的 cookie 都应在 raw_cookies 中
         let inner = manager.inner.lock().unwrap();
-        let a_entries: Vec<_> = inner.raw_cookies.iter()
+        let a_entries: Vec<_> = inner
+            .raw_cookies
+            .iter()
             .filter(|e| e.raw_cookie.starts_with("a="))
             .collect();
-        assert_eq!(a_entries.len(), 2, "two cookies with different paths should coexist");
+        assert_eq!(
+            a_entries.len(),
+            2,
+            "two cookies with different paths should coexist"
+        );
     }
 
     #[test]
     fn test_domain_helpers() {
-        assert_eq!(extract_domain_attr("a=1; Domain=example.com"), Some("example.com".to_string()));
-        assert_eq!(extract_domain_attr("a=1; Domain=EXAMPLE.COM"), Some("example.com".to_string()));
+        assert_eq!(
+            extract_domain_attr("a=1; Domain=example.com"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_domain_attr("a=1; Domain=EXAMPLE.COM"),
+            Some("example.com".to_string())
+        );
         assert_eq!(extract_domain_attr("a=1"), None);
         assert_eq!(extract_domain_attr("a=1; Path=/; Secure"), None);
 
@@ -561,23 +623,37 @@ mod tests {
         // host-only cookie on example.com
         manager.add_cookie("sid=1", "https://example.com").unwrap();
         // Domain=example.com cookie (explicit domain, applies to subdomains too)
-        manager.add_cookie("sid=2; Domain=example.com", "https://example.com").unwrap();
+        manager
+            .add_cookie("sid=2; Domain=example.com", "https://example.com")
+            .unwrap();
 
         // Both must exist in raw_cookies (tagged key distinguishes host-only vs Domain)
         let inner = manager.inner.lock().unwrap();
-        let sid_entries: Vec<_> = inner.raw_cookies.iter()
+        let sid_entries: Vec<_> = inner
+            .raw_cookies
+            .iter()
             .filter(|e| e.raw_cookie.starts_with("sid="))
             .collect();
-        assert_eq!(sid_entries.len(), 2, "host-only and Domain cookie should coexist");
+        assert_eq!(
+            sid_entries.len(),
+            2,
+            "host-only and Domain cookie should coexist"
+        );
         drop(inner);
 
         // Host-only on different host should also coexist
         manager.add_cookie("sid=3", "https://other.com").unwrap();
         let inner2 = manager.inner.lock().unwrap();
-        let all_sid: Vec<_> = inner2.raw_cookies.iter()
+        let all_sid: Vec<_> = inner2
+            .raw_cookies
+            .iter()
             .filter(|e| e.raw_cookie.starts_with("sid="))
             .collect();
-        assert_eq!(all_sid.len(), 3, "host-only on different host should not collide");
+        assert_eq!(
+            all_sid.len(),
+            3,
+            "host-only on different host should not collide"
+        );
         drop(inner2);
 
         // clear_domain should not cause cross-contamination
@@ -585,16 +661,23 @@ mod tests {
         let cookies = manager.get_cookies("https://example.com").unwrap();
         assert!(cookies.is_empty(), "example.com cookies should be cleared");
         let other_cookies = manager.get_cookies("https://other.com").unwrap();
-        assert!(other_cookies.contains("sid=3"), "other.com host-only should survive");
+        assert!(
+            other_cookies.contains("sid=3"),
+            "other.com host-only should survive"
+        );
     }
 
     #[test]
     fn test_session_cookie_not_persisted() {
         let manager = CookieManager::default();
         // session cookie (no Max-Age/Expires)
-        manager.add_cookie("session_only=val", "https://example.com").unwrap();
+        manager
+            .add_cookie("session_only=val", "https://example.com")
+            .unwrap();
         // persistent cookie
-        manager.add_cookie("persistent=val; Max-Age=3600", "https://example.com").unwrap();
+        manager
+            .add_cookie("persistent=val; Max-Age=3600", "https://example.com")
+            .unwrap();
 
         let path = temp_dir().join("test_session_persist.json");
         manager.save_persistent_cookies(&path).unwrap();
@@ -602,9 +685,15 @@ mod tests {
         let loaded = CookieManager::load_persistent_cookies(&path).unwrap();
         // persistent cookie must be restored
         let cookies = loaded.get_cookies("https://example.com").unwrap();
-        assert!(cookies.contains("persistent=val"), "persistent cookie must be restored");
+        assert!(
+            cookies.contains("persistent=val"),
+            "persistent cookie must be restored"
+        );
         // session cookie must NOT be restored
-        assert!(!cookies.contains("session_only=val"), "session cookie must not persist");
+        assert!(
+            !cookies.contains("session_only=val"),
+            "session cookie must not persist"
+        );
 
         fs::remove_file(&path).ok();
     }

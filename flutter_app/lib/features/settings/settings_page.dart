@@ -12,7 +12,8 @@ class SettingsPage extends ConsumerStatefulWidget {
   ConsumerState<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends ConsumerState<SettingsPage> with WidgetsBindingObserver {
+class _SettingsPageState extends ConsumerState<SettingsPage>
+    with WidgetsBindingObserver {
   bool _notificationPermissionGranted = false;
   bool _isCheckingPermission = true;
 
@@ -117,7 +118,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> with WidgetsBinding
             ),
             trailing: Switch(
               value: _notificationPermissionGranted,
-              onChanged: _isCheckingPermission ? null : _onNotificationSwitchToggled,
+              onChanged:
+                  _isCheckingPermission ? null : _onNotificationSwitchToggled,
             ),
           ),
           const Divider(indent: 16, endIndent: 16),
@@ -160,13 +162,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> with WidgetsBinding
               }
             },
             child: Column(
-              children: ThemeMode.values.map(
-                (mode) => RadioListTile<ThemeMode>(
-                  title: Text(_themeModeLabel(mode)),
-                  value: mode,
-                  secondary: Icon(_themeModeIcon(mode)),
-                ),
-              ).toList(),
+              children: ThemeMode.values
+                  .map(
+                    (mode) => RadioListTile<ThemeMode>(
+                      title: Text(_themeModeLabel(mode)),
+                      value: mode,
+                      secondary: Icon(_themeModeIcon(mode)),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
           const Divider(indent: 16, endIndent: 16),

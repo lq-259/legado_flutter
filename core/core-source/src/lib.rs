@@ -4,29 +4,29 @@
 //! 对应原 Legado 的 `model/webBook/` 和 `model/analyzeRule/`。
 //! 支持 CSS/XPath/JSONPath/Regex 四种规则表达式，使用 Rhai 脚本引擎代替原 JS 引擎。
 
+pub mod legado;
+pub mod parser;
 pub mod rule_engine;
 pub mod script_engine;
-pub mod parser;
 pub mod types;
 pub mod utils;
-pub mod legado;
 
 // 重新导出主要类型
-pub use rule_engine::{RuleEngine, RuleExpression, RuleType, RuleError};
-pub use script_engine::{ScriptEngine, ScriptResult, ScriptContext};
-pub use parser::{BookSourceParser, SearchResult, BookDetail, ChapterInfo, ChapterContent, ExploreEntry};
-pub use types::{BookSource, SearchRule, BookInfoRule, TocRule, ContentRule, ExtractType};
+pub use parser::{
+    BookDetail, BookSourceParser, ChapterContent, ChapterInfo, ExploreEntry, SearchResult,
+};
+pub use rule_engine::{RuleEngine, RuleError, RuleExpression, RuleType};
+pub use script_engine::{ScriptContext, ScriptEngine, ScriptResult};
+pub use types::{BookInfoRule, BookSource, ContentRule, ExtractType, SearchRule, TocRule};
 
 use serde::Serialize;
-use std::fs;
-use std::path::Path;
+
 use jsonpath_lib as jsonpath;
 use sxd_xpath::Factory;
 
 /// 书源规则解析入口
 pub fn parse_book_source(json: &str) -> Result<BookSource, String> {
-    serde_json::from_str(json)
-        .map_err(|e| format!("解析书源失败: {}", e))
+    serde_json::from_str(json).map_err(|e| format!("解析书源失败: {}", e))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,8 +205,7 @@ fn check_rule_expression(field: &str, expr: &str, issues: &mut Vec<ValidationIss
         return;
     }
 
-    let rule_type = RuleExpression::parse(expr_without_suffix)
-        .map(|r| r.rule_type);
+    let rule_type = RuleExpression::parse(expr_without_suffix).map(|r| r.rule_type);
 
     match rule_type {
         Some(RuleType::Regex) => {
@@ -244,7 +243,8 @@ fn check_rule_expression(field: &str, expr: &str, issues: &mut Vec<ValidationIss
             let jsonpath_expr = expr_without_suffix
                 .strip_prefix("@Json:")
                 .unwrap_or(expr_without_suffix);
-            let test_json = serde_json::json!({"test": {"key": "value"}, "items": [{"name": "test"}]});
+            let test_json =
+                serde_json::json!({"test": {"key": "value"}, "items": [{"name": "test"}]});
             if let Err(e) = jsonpath::select(&test_json, jsonpath_expr) {
                 issues.push(ValidationIssue {
                     field: field.into(),
@@ -304,11 +304,25 @@ fn check_rule_expression(field: &str, expr: &str, issues: &mut Vec<ValidationIss
 
 fn is_jsoup_like(expr: &str) -> bool {
     for pattern in &[
-        "@tag.", "@class.", "@id.", "@attr.",
-        "@text", "@html", "@href", "@src", "@ownText",
-        "@textNodes", "@content", "@raw", "@css",
-        ":contains(", ":matches(", ":matchText(",
-        ":eq(", ":lt(", ":gt(",
+        "@tag.",
+        "@class.",
+        "@id.",
+        "@attr.",
+        "@text",
+        "@html",
+        "@href",
+        "@src",
+        "@ownText",
+        "@textNodes",
+        "@content",
+        "@raw",
+        "@css",
+        ":contains(",
+        ":matches(",
+        ":matchText(",
+        ":eq(",
+        ":lt(",
+        ":gt(",
     ] {
         if expr.contains(pattern) {
             return true;
@@ -339,7 +353,7 @@ pub fn create_sample_book_source() -> BookSource {
         group_name: None,
         custom_order: 0,
         weight: 0,
-        
+
         rule_search: Some(SearchRule {
             search_url: None,
             book_list: Some(".book-item".to_string()),
@@ -354,11 +368,11 @@ pub fn create_sample_book_source() -> BookSource {
         rule_book_info: None,
         rule_toc: None,
         rule_content: None,
-        
+
         login_url: None,
         header: None,
         js_lib: None,
-        
+
         explore_url: None,
         rule_explore: None,
         book_url_pattern: None,
@@ -374,7 +388,11 @@ pub fn create_sample_book_source() -> BookSource {
 mod tests {
     use super::*;
 
-    fn make_source(search_url: Option<&str>, book_list: Option<&str>, name: Option<&str>) -> BookSource {
+    fn make_source(
+        search_url: Option<&str>,
+        book_list: Option<&str>,
+        name: Option<&str>,
+    ) -> BookSource {
         BookSource {
             id: "test".into(),
             name: "test".into(),
@@ -440,9 +458,9 @@ mod tests {
     fn test_invalid_xpath_produces_compilation_issue() {
         let source = make_source(None, Some("//div[@class='missing'"), None);
         let issues = validate_book_source(&source);
-        let has_xpath_issue = issues.iter().any(|i| {
-            i.field == "rule_search.book_list" && i.message.contains("XPath")
-        });
+        let has_xpath_issue = issues
+            .iter()
+            .any(|i| i.field == "rule_search.book_list" && i.message.contains("XPath"));
         assert!(
             has_xpath_issue,
             "Expected XPath compilation issue for unclosed predicate, got: {:?}",
@@ -454,9 +472,9 @@ mod tests {
     fn test_valid_xpath_no_false_warning() {
         let source = make_source(None, Some("//div[@class='book']"), None);
         let issues = validate_book_source(&source);
-        let has_xpath_issue = issues.iter().any(|i| {
-            i.field == "rule_search.book_list" && i.message.contains("XPath")
-        });
+        let has_xpath_issue = issues
+            .iter()
+            .any(|i| i.field == "rule_search.book_list" && i.message.contains("XPath"));
         assert!(
             !has_xpath_issue,
             "Valid XPath should not produce a compilation issue, got: {:?}",
@@ -482,9 +500,9 @@ mod tests {
     fn test_valid_jsonpath_no_false_warning() {
         let source = make_source(None, None, Some("$.data.items"));
         let issues = validate_book_source(&source);
-        let has_jsonpath_issue = issues.iter().any(|i| {
-            i.field == "rule_search.name" && i.message.contains("JSONPath")
-        });
+        let has_jsonpath_issue = issues
+            .iter()
+            .any(|i| i.field == "rule_search.name" && i.message.contains("JSONPath"));
         assert!(
             !has_jsonpath_issue,
             "Valid JSONPath should not produce an error, got: {:?}",
@@ -518,7 +536,9 @@ mod tests {
         };
         let issues = validate_book_source(&source);
         let has_xpath_error = issues.iter().any(|i| {
-            i.field == "rule_content.content" && i.severity == "error" && i.message.contains("XPath")
+            i.field == "rule_content.content"
+                && i.severity == "error"
+                && i.message.contains("XPath")
         });
         assert!(
             !has_xpath_error,
@@ -539,7 +559,9 @@ mod tests {
         };
         let issues = validate_book_source(&source);
         let has_xpath_error = issues.iter().any(|i| {
-            i.field == "rule_content.content" && i.severity == "error" && i.message.contains("XPath")
+            i.field == "rule_content.content"
+                && i.severity == "error"
+                && i.message.contains("XPath")
         });
         assert!(
             !has_xpath_error,
@@ -560,7 +582,9 @@ mod tests {
         };
         let issues = validate_book_source(&source);
         let has_xpath_error = issues.iter().any(|i| {
-            i.field == "rule_content.content" && i.severity == "error" && i.message.contains("XPath")
+            i.field == "rule_content.content"
+                && i.severity == "error"
+                && i.message.contains("XPath")
         });
         assert!(
             has_xpath_error,
@@ -575,9 +599,9 @@ mod tests {
     fn test_css_with_index_modifier_no_false_warning() {
         let source = make_source(None, None, Some("a.0@title"));
         let issues = validate_book_source(&source);
-        let has_name_css_warning = issues.iter().any(|i| {
-            i.field == "rule_search.name" && i.message.contains("CSS")
-        });
+        let has_name_css_warning = issues
+            .iter()
+            .any(|i| i.field == "rule_search.name" && i.message.contains("CSS"));
         assert!(
             !has_name_css_warning,
             "CSS with .0 index modifier should not trigger false CSS warning, got: {:?}",
@@ -589,9 +613,9 @@ mod tests {
     fn test_css_with_negative_index_modifier_no_false_warning() {
         let source = make_source(None, Some("td.-1@text"), None);
         let issues = validate_book_source(&source);
-        let has_book_list_css_warning = issues.iter().any(|i| {
-            i.field == "rule_search.book_list" && i.message.contains("CSS")
-        });
+        let has_book_list_css_warning = issues
+            .iter()
+            .any(|i| i.field == "rule_search.book_list" && i.message.contains("CSS"));
         assert!(
             !has_book_list_css_warning,
             "CSS with .-1 index modifier should not trigger false CSS warning, got: {:?}",
@@ -603,9 +627,9 @@ mod tests {
     fn test_css_with_skip_modifier_no_false_warning() {
         let source = make_source(None, None, Some("a!2@title"));
         let issues = validate_book_source(&source);
-        let has_name_css_warning = issues.iter().any(|i| {
-            i.field == "rule_search.name" && i.message.contains("CSS")
-        });
+        let has_name_css_warning = issues
+            .iter()
+            .any(|i| i.field == "rule_search.name" && i.message.contains("CSS"));
         assert!(
             !has_name_css_warning,
             "CSS with !2 skip modifier should not trigger false CSS warning, got: {:?}",
@@ -619,9 +643,9 @@ mod tests {
     fn test_css_with_alternatives_no_false_warning() {
         let source = make_source(None, Some(".class1||.class2"), None);
         let issues = validate_book_source(&source);
-        let has_book_list_css_warning = issues.iter().any(|i| {
-            i.field == "rule_search.book_list" && i.message.contains("CSS")
-        });
+        let has_book_list_css_warning = issues
+            .iter()
+            .any(|i| i.field == "rule_search.book_list" && i.message.contains("CSS"));
         assert!(
             !has_book_list_css_warning,
             "CSS with || alternatives should not trigger false CSS warning, got: {:?}",
@@ -633,9 +657,9 @@ mod tests {
     fn test_css_with_bad_alternative_still_warns() {
         let source = make_source(None, Some(".good||."), None);
         let issues = validate_book_source(&source);
-        let has_book_list_css_warning = issues.iter().any(|i| {
-            i.field == "rule_search.book_list" && i.message.contains("CSS")
-        });
+        let has_book_list_css_warning = issues
+            .iter()
+            .any(|i| i.field == "rule_search.book_list" && i.message.contains("CSS"));
         assert!(
             has_book_list_css_warning,
             "CSS with a bad alternative ('.') should still produce a warning, got: {:?}",
@@ -660,7 +684,8 @@ mod tests {
         // The key point is no crash and the suffix is stripped.
         let has_book_info_error = issues.iter().any(|i| {
             (i.field == "rule_book_info.name" || i.field == "rule_book_info.author")
-                && i.severity == "error" && i.message.contains("CSS")
+                && i.severity == "error"
+                && i.message.contains("CSS")
         });
         assert!(
             !has_book_info_error,

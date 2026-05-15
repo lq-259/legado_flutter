@@ -6,11 +6,11 @@
 use crate::rule_engine::RuleEngine;
 use crate::script_engine::ScriptEngine;
 use crate::types::{BookSource, TocRule};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tracing::{info, warn};
-use regex::Regex;
 use std::collections::{HashSet, VecDeque};
+use tracing::{info, warn};
 
 /// 搜索结果（对应原 Legado 的 SearchBook）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,21 +105,39 @@ impl BookSourceParser {
     }
 
     /// Execute a rule string, preferring the legado selector chain for Legado-style rules.
-    fn run_rule(&self, rule: &str, html: &str, context: &crate::legado::RuleContext) -> Result<Vec<String>, String> {
+    fn run_rule(
+        &self,
+        rule: &str,
+        html: &str,
+        context: &crate::legado::RuleContext,
+    ) -> Result<Vec<String>, String> {
         match crate::legado::execute_legado_rule(rule, html, context) {
             Ok(results) if !results.is_empty() => return Ok(results),
             Ok(results) if !can_fallback_to_legacy_rule_engine(rule) => return Ok(results),
             _ => {}
         }
-        self.rule_engine.execute_rule(rule, html).map_err(|e| e.to_string())
+        self.rule_engine
+            .execute_rule(rule, html)
+            .map_err(|e| e.to_string())
     }
 
     /// Execute a rule string and return the first result.
-    fn run_rule_first(&self, rule: &str, html: &str, context: &crate::legado::RuleContext) -> Option<String> {
+    fn run_rule_first(
+        &self,
+        rule: &str,
+        html: &str,
+        context: &crate::legado::RuleContext,
+    ) -> Option<String> {
         self.run_rule(rule, html, context).ok()?.into_iter().next()
     }
 
-    async fn fetch_url(&self, source: &BookSource, url: &str, keyword: &str, page: i32) -> Result<String, String> {
+    async fn fetch_url(
+        &self,
+        source: &BookSource,
+        url: &str,
+        keyword: &str,
+        page: i32,
+    ) -> Result<String, String> {
         let legado_url = crate::legado::url::parse_legado_url(url);
         let full_url = resolve_source_url(source, &legado_url, keyword, page);
         let headers = parse_source_headers(source.header.as_deref());
@@ -132,26 +150,29 @@ impl BookSourceParser {
     /// 对应原 Legado 的 searchBook 流程
     pub async fn search(&self, source: &BookSource, keyword: &str) -> Vec<SearchResult> {
         info!("搜索书籍: {} (书源: {})", keyword, source.name);
-        
+
         // 1. 构建搜索 URL
         let search_url = match &source.rule_search {
-            Some(search_rule) => {
-                match search_rule.search_url.as_ref() {
-                    Some(url) => url.clone(),
-                    None => {
-                        warn!("书源 {} 未配置搜索 URL", source.name);
-                        return vec![];
-                    }
+            Some(search_rule) => match search_rule.search_url.as_ref() {
+                Some(url) => url.clone(),
+                None => {
+                    warn!("书源 {} 未配置搜索 URL", source.name);
+                    return vec![];
                 }
-            }
+            },
             None => {
                 warn!("书源 {} 未配置搜索规则", source.name);
                 return vec![];
             }
         };
-        
+
         // 2. 发起 HTTP 请求
-        let request_url = resolve_source_url(source, &crate::legado::url::parse_legado_url(&search_url), keyword, 1);
+        let request_url = resolve_source_url(
+            source,
+            &crate::legado::url::parse_legado_url(&search_url),
+            keyword,
+            1,
+        );
         let html = match self.fetch_url(source, &search_url, keyword, 1).await {
             Ok(text) => text,
             Err(e) => {
@@ -160,58 +181,82 @@ impl BookSourceParser {
             }
         };
         let request_context = crate::legado::RuleContext::for_search(&search_url, keyword, 1);
-        let request_context = rule_context_with_source_headers(
-            rule_context_with_src(request_context, &html),
-            source,
-        );
-        
+        let request_context =
+            rule_context_with_source_headers(rule_context_with_src(request_context, &html), source);
+
         // 3. 使用规则解析搜索结果
         let rules = source.rule_search.as_ref().unwrap();
-        
+
         // 4. 解析结果
         let mut results = Vec::new();
-        
-        let contexts = rules.book_list.as_ref()
-            .and_then(|r| self.run_rule(r, &html, &request_context).ok())
+
+        let contexts = rules
+            .book_list
+            .as_ref()
+            .and_then(|r| {
+                self.run_rule(&list_context_rule(r), &html, &request_context)
+                    .ok()
+            })
             .filter(|items| !items.is_empty())
             .unwrap_or_else(|| vec![html.clone()]);
 
         let names = extract_from_contexts(self, rules.name.as_deref(), &contexts, &request_context);
-        let authors = extract_from_contexts(self, rules.author.as_deref(), &contexts, &request_context);
-        let covers = extract_from_contexts(self, rules.cover_url.as_deref(), &contexts, &request_context);
-        let book_urls = extract_from_contexts(self, rules.book_url.as_deref(), &contexts, &request_context);
-        let intros = extract_from_contexts(self, rules.intro.as_deref(), &contexts, &request_context);
+        let authors =
+            extract_from_contexts(self, rules.author.as_deref(), &contexts, &request_context);
+        let covers = extract_from_contexts(
+            self,
+            rules.cover_url.as_deref(),
+            &contexts,
+            &request_context,
+        );
+        let book_urls =
+            extract_from_contexts(self, rules.book_url.as_deref(), &contexts, &request_context);
+        let intros =
+            extract_from_contexts(self, rules.intro.as_deref(), &contexts, &request_context);
 
-        let max_len = names.len()
+        let max_len = names
+            .len()
             .max(authors.len())
             .max(covers.len())
             .max(book_urls.len())
             .max(intros.len());
-        
+
         for i in 0..max_len {
             results.push(SearchResult {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: names.get(i).cloned().unwrap_or_default(),
                 author: authors.get(i).cloned().unwrap_or_default(),
-                cover_url: covers.get(i).cloned()
+                cover_url: covers
+                    .get(i)
+                    .cloned()
                     .map(|u| crate::utils::build_full_url(&request_url, &u)),
                 intro: None,
-                book_url: book_urls.get(i).cloned()
+                book_url: book_urls
+                    .get(i)
+                    .cloned()
                     .map(|u| crate::utils::build_full_url(&request_url, &u))
                     .unwrap_or_else(|| request_url.clone()),
                 source_id: source.id.clone(),
                 source_name: source.name.clone(),
             });
         }
-        
+
         info!("搜索完成，找到 {} 个结果", results.len());
         results
     }
 
     /// 探索/发现书籍
     /// 对应原 Legado 的 explore 流程
-    pub async fn explore(&self, source: &BookSource, explore_url: &str, page: i32) -> Vec<SearchResult> {
-        info!("探索: {} page={} (书源: {})", explore_url, page, source.name);
+    pub async fn explore(
+        &self,
+        source: &BookSource,
+        explore_url: &str,
+        page: i32,
+    ) -> Vec<SearchResult> {
+        info!(
+            "探索: {} page={} (书源: {})",
+            explore_url, page, source.name
+        );
 
         let legado_url = crate::legado::url::parse_legado_url(explore_url);
         let full_url = crate::legado::url::resolve_url_template(&legado_url, "", page, &source.url);
@@ -226,36 +271,53 @@ impl BookSourceParser {
 
         // Try JSON array format first: [{"title": "...", "url": "..."}]
         if let Ok(json_array) = serde_json::from_str::<Vec<JsonValue>>(&html) {
-            let results: Vec<SearchResult> = json_array.iter().filter_map(|item| {
-                let title = item.get("title").or_else(|| item.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let url = item.get("url").or_else(|| item.get("bookUrl"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if title.is_empty() || url.is_empty() {
-                    return None;
-                }
-                Some(SearchResult {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: title.to_string(),
-                    author: item.get("author").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    cover_url: item.get("cover").or_else(|| item.get("coverUrl"))
+            let results: Vec<SearchResult> = json_array
+                .iter()
+                .filter_map(|item| {
+                    let title = item
+                        .get("title")
+                        .or_else(|| item.get("name"))
                         .and_then(|v| v.as_str())
-                        .map(|u| crate::utils::build_full_url(&full_url, u)),
-                    intro: item.get("intro").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    book_url: crate::utils::build_full_url(&full_url, url),
-                    source_id: source.id.clone(),
-                    source_name: source.name.clone(),
+                        .unwrap_or("");
+                    let url = item
+                        .get("url")
+                        .or_else(|| item.get("bookUrl"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if title.is_empty() || url.is_empty() {
+                        return None;
+                    }
+                    Some(SearchResult {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: title.to_string(),
+                        author: item
+                            .get("author")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        cover_url: item
+                            .get("cover")
+                            .or_else(|| item.get("coverUrl"))
+                            .and_then(|v| v.as_str())
+                            .map(|u| crate::utils::build_full_url(&full_url, u)),
+                        intro: item
+                            .get("intro")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        book_url: crate::utils::build_full_url(&full_url, url),
+                        source_id: source.id.clone(),
+                        source_name: source.name.clone(),
+                    })
                 })
-            }).collect();
+                .collect();
             info!("探索完成 (JSON)，找到 {} 个结果", results.len());
             return results;
         }
 
         // Try title::url text format
         if html.contains("::") {
-            let results: Vec<SearchResult> = html.lines()
+            let results: Vec<SearchResult> = html
+                .lines()
                 .filter(|line| line.contains("::"))
                 .filter_map(|line| {
                     let (title, url) = line.split_once("::")?;
@@ -290,38 +352,76 @@ impl BookSourceParser {
         vec![]
     }
 
-    fn parse_explore_with_rule(&self, html: &str, explore_rule: &crate::types::SearchRule, source: &BookSource, base_url: &str) -> Vec<SearchResult> {
+    fn parse_explore_with_rule(
+        &self,
+        html: &str,
+        explore_rule: &crate::types::SearchRule,
+        source: &BookSource,
+        base_url: &str,
+    ) -> Vec<SearchResult> {
         let context = crate::legado::RuleContext::for_search(base_url, "", 1);
-        let request_context = rule_context_with_source_headers(
-            rule_context_with_src(context, html),
-            source,
-        );
+        let request_context =
+            rule_context_with_source_headers(rule_context_with_src(context, html), source);
 
-        let contexts = explore_rule.book_list.as_ref()
-            .and_then(|r| self.run_rule(r, html, &request_context).ok())
+        let contexts = explore_rule
+            .book_list
+            .as_ref()
+            .and_then(|r| {
+                self.run_rule(&list_context_rule(r), html, &request_context)
+                    .ok()
+            })
             .filter(|items| !items.is_empty())
             .unwrap_or_else(|| vec![html.to_string()]);
 
-        let names = extract_from_contexts(self, explore_rule.name.as_deref(), &contexts, &request_context);
-        let authors = extract_from_contexts(self, explore_rule.author.as_deref(), &contexts, &request_context);
-        let covers = extract_from_contexts(self, explore_rule.cover_url.as_deref(), &contexts, &request_context);
-        let book_urls = extract_from_contexts(self, explore_rule.book_url.as_deref(), &contexts, &request_context);
+        let names = extract_from_contexts(
+            self,
+            explore_rule.name.as_deref(),
+            &contexts,
+            &request_context,
+        );
+        let authors = extract_from_contexts(
+            self,
+            explore_rule.author.as_deref(),
+            &contexts,
+            &request_context,
+        );
+        let covers = extract_from_contexts(
+            self,
+            explore_rule.cover_url.as_deref(),
+            &contexts,
+            &request_context,
+        );
+        let book_urls = extract_from_contexts(
+            self,
+            explore_rule.book_url.as_deref(),
+            &contexts,
+            &request_context,
+        );
 
-        let max_len = names.len().max(authors.len()).max(covers.len()).max(book_urls.len());
-        (0..max_len).map(|i| {
-            SearchResult {
+        let max_len = names
+            .len()
+            .max(authors.len())
+            .max(covers.len())
+            .max(book_urls.len());
+        (0..max_len)
+            .map(|i| SearchResult {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: names.get(i).cloned().unwrap_or_default(),
                 author: authors.get(i).cloned().unwrap_or_default(),
-                cover_url: covers.get(i).cloned().map(|u| crate::utils::build_full_url(base_url, &u)),
+                cover_url: covers
+                    .get(i)
+                    .cloned()
+                    .map(|u| crate::utils::build_full_url(base_url, &u)),
                 intro: None,
-                book_url: book_urls.get(i).cloned()
+                book_url: book_urls
+                    .get(i)
+                    .cloned()
                     .map(|u| crate::utils::build_full_url(base_url, &u))
                     .unwrap_or_else(|| base_url.to_string()),
                 source_id: source.id.clone(),
                 source_name: source.name.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     pub fn get_explore_entries(source: &BookSource) -> Vec<ExploreEntry> {
@@ -345,7 +445,7 @@ impl BookSourceParser {
     pub async fn get_book_info(&self, source: &BookSource, book_url: &str) -> Option<BookDetail> {
         let book_url = crate::utils::build_full_url(&source.url, book_url);
         info!("获取书籍详情: {} (书源: {})", book_url, source.name);
-        
+
         // 1. 请求书籍页面
         let html = match self.fetch_url(source, &book_url, "", 1).await {
             Ok(text) => text,
@@ -358,24 +458,27 @@ impl BookSourceParser {
             crate::legado::RuleContext::for_book_info(&book_url, &html),
             source,
         );
-        
+
         // 2. 使用规则解析
         let rules = source.rule_book_info.as_ref()?;
 
         // Phase 2a: book_info_init - execute init rule and use JSON result if available
-        let (working_content, init_context, is_init_json) = execute_book_info_init(
-            self,
-            rules.book_info_init.as_deref(),
-            &html,
-            &context,
-        )
-        .await;
+        let (working_content, init_context, is_init_json) =
+            execute_book_info_init(self, rules.book_info_init.as_deref(), &html, &context).await;
 
         let extract_field = |rule: Option<&String>| -> Option<String> {
             let rule_str = rule?;
             if rule_str.contains("{{") {
-                let resolved = crate::legado::url::resolve_rule_template(rule_str, &working_content, &init_context);
-                if resolved.is_empty() { None } else { Some(resolved) }
+                let resolved = crate::legado::url::resolve_rule_template(
+                    rule_str,
+                    &working_content,
+                    &init_context,
+                );
+                if resolved.is_empty() {
+                    None
+                } else {
+                    Some(resolved)
+                }
             } else {
                 let effective_rule = if is_init_json && is_simple_field_name(rule_str) {
                     format!("$.{}", rule_str)
@@ -389,10 +492,14 @@ impl BookSourceParser {
         let detail_name = extract_field(rules.name.as_ref());
         let detail_author = extract_field(rules.author.as_ref());
 
-        let can_rename_name = rules.can_rename.as_ref()
+        let can_rename_name = rules
+            .can_rename
+            .as_ref()
             .and_then(|rule| self.run_rule_first(rule, &working_content, &init_context))
             .map(|v| !v.is_empty() && v != "false" && v != "0");
-        let can_rename_author = rules.can_rename.as_ref()
+        let can_rename_author = rules
+            .can_rename
+            .as_ref()
             .and_then(|rule| self.run_rule_first(rule, &working_content, &init_context))
             .map(|v| !v.is_empty() && v != "false" && v != "0");
 
@@ -420,7 +527,11 @@ impl BookSourceParser {
         let chapters_url = match rules.toc_url.as_deref() {
             Some(toc_rule) if !toc_rule.trim().is_empty() => {
                 let resolved = if toc_rule.contains("{{") {
-                    crate::legado::url::resolve_rule_template(toc_rule, &working_content, &init_context)
+                    crate::legado::url::resolve_rule_template(
+                        toc_rule,
+                        &working_content,
+                        &init_context,
+                    )
                 } else {
                     let effective_toc_rule = if is_init_json && is_simple_field_name(toc_rule) {
                         format!("$.{}", toc_rule)
@@ -463,14 +574,16 @@ impl BookSourceParser {
             }
         };
 
-        let chapter_list_reverse = rules.chapter_list.as_deref()
+        let chapter_list_reverse = rules
+            .chapter_list
+            .as_deref()
             .map_or(false, |r| r.trim_start().starts_with('-'));
         let modified_rules: std::borrow::Cow<TocRule>;
         let effective_rules = if chapter_list_reverse {
             let mut m = rules.clone();
-            m.chapter_list = m.chapter_list.map(|s| {
-                s.trim_start().trim_start_matches('-').trim().to_string()
-            });
+            m.chapter_list = m
+                .chapter_list
+                .map(|s| s.trim_start().trim_start_matches('-').trim().to_string());
             modified_rules = std::borrow::Cow::Owned(m);
             &*modified_rules
         } else {
@@ -520,11 +633,17 @@ impl BookSourceParser {
                 .parse_chapters_from_page(source, effective_rules, &html, &context, &url)
                 .await;
 
-            let max_len = chapter_names.len().max(chapter_urls.len()).max(chapter_vips.len());
+            let max_len = chapter_names
+                .len()
+                .max(chapter_urls.len())
+                .max(chapter_vips.len());
             for i in 0..max_len {
-                let title = chapter_names.get(i).cloned()
+                let title = chapter_names
+                    .get(i)
+                    .cloned()
                     .unwrap_or_else(|| format!("第 {} 章", chapter_offset + i as i32 + 1));
-                let chapter_url_val = chapter_urls.get(i)
+                let chapter_url_val = chapter_urls
+                    .get(i)
                     .cloned()
                     .map(|u| crate::utils::build_full_url(&url, &u))
                     .unwrap_or_default();
@@ -542,10 +661,16 @@ impl BookSourceParser {
             let next_urls: Vec<String> = match rules.next_toc_url.as_deref() {
                 Some(next_rule) if !next_rule.trim().is_empty() => {
                     if next_rule.contains("{{") {
-                        let resolved = crate::legado::url::resolve_rule_template(next_rule, &html, &context);
-                        if resolved.is_empty() { Vec::new() } else { vec![resolved] }
+                        let resolved =
+                            crate::legado::url::resolve_rule_template(next_rule, &html, &context);
+                        if resolved.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![resolved]
+                        }
                     } else {
-                        self.run_rule(next_rule, &html, &context).unwrap_or_default()
+                        self.run_rule(next_rule, &html, &context)
+                            .unwrap_or_default()
                     }
                 }
                 _ => Vec::new(),
@@ -567,7 +692,11 @@ impl BookSourceParser {
             }
         }
 
-        info!("章节列表获取完成，共 {} 章 ({} 页)", all_chapters.len(), seen_urls.len());
+        info!(
+            "章节列表获取完成，共 {} 章 ({} 页)",
+            all_chapters.len(),
+            seen_urls.len()
+        );
         all_chapters
     }
 
@@ -590,28 +719,43 @@ impl BookSourceParser {
                 html,
                 context,
                 self.http_client.cookie_jar(),
-            ).await {
+            )
+            .await
+            {
                 Some(items) => {
-                    let names = extract_json_field_from_contexts(rules.chapter_name.as_deref(), &items);
-                    let urls = extract_json_field_from_contexts(rules.chapter_url.as_deref(), &items);
-                    let vips = rules.is_vip.as_deref()
+                    let names =
+                        extract_json_field_from_contexts(rules.chapter_name.as_deref(), &items);
+                    let urls =
+                        extract_json_field_from_contexts(rules.chapter_url.as_deref(), &items);
+                    let vips = rules
+                        .is_vip
+                        .as_deref()
                         .map(|rule| {
-                            items.iter().map(|item| {
-                                item.get(rule).and_then(js_is_vip_to_bool)
-                            }).collect()
+                            items
+                                .iter()
+                                .map(|item| item.get(rule).and_then(js_is_vip_to_bool))
+                                .collect()
                         })
                         .unwrap_or_else(|| vec![None; items.len()]);
                     return (names, urls, vips);
                 }
-                None => match self.execute_legado_chapter_list_script(source, book_url, chapter_list_rule).await {
+                None => match self
+                    .execute_legado_chapter_list_script(source, book_url, chapter_list_rule)
+                    .await
+                {
                     Some(items) => {
-                        let names = extract_json_field_from_contexts(rules.chapter_name.as_deref(), &items);
-                        let urls = extract_json_field_from_contexts(rules.chapter_url.as_deref(), &items);
-                        let vips = rules.is_vip.as_deref()
+                        let names =
+                            extract_json_field_from_contexts(rules.chapter_name.as_deref(), &items);
+                        let urls =
+                            extract_json_field_from_contexts(rules.chapter_url.as_deref(), &items);
+                        let vips = rules
+                            .is_vip
+                            .as_deref()
                             .map(|rule| {
-                                items.iter().map(|item| {
-                                    item.get(rule).and_then(js_is_vip_to_bool)
-                                }).collect()
+                                items
+                                    .iter()
+                                    .map(|item| item.get(rule).and_then(js_is_vip_to_bool))
+                                    .collect()
                             })
                             .unwrap_or_else(|| vec![None; items.len()]);
                         return (names, urls, vips);
@@ -621,27 +765,39 @@ impl BookSourceParser {
             }
         }
 
-        let item_contexts = match self.run_rule(chapter_list_rule, html, context) {
-            Ok(items) if !items.is_empty() => items,
-            _ => vec![html.to_string()],
-        };
-        let names = extract_from_contexts(self, rules.chapter_name.as_deref(), &item_contexts, context);
-        let urls = extract_from_contexts(self, rules.chapter_url.as_deref(), &item_contexts, context);
-        let vips = rules.is_vip.as_deref()
+        let item_contexts =
+            match self.run_rule(&list_context_rule(chapter_list_rule), html, context) {
+                Ok(items) if !items.is_empty() => items,
+                _ => vec![html.to_string()],
+            };
+        let names =
+            extract_from_contexts(self, rules.chapter_name.as_deref(), &item_contexts, context);
+        let urls =
+            extract_from_contexts(self, rules.chapter_url.as_deref(), &item_contexts, context);
+        let vips = rules
+            .is_vip
+            .as_deref()
             .map(|rule| {
-                item_contexts.iter().map(|item| {
-                    let mut ctx = context.clone();
-                    ctx.result = vec![crate::legado::LegadoValue::String(item.clone())];
-                    self.run_rule_first(rule, item, &ctx)
-                        .map(|v| !v.is_empty() && v != "false" && v != "0")
-                }).collect()
+                item_contexts
+                    .iter()
+                    .map(|item| {
+                        let mut ctx = context.clone();
+                        ctx.result = vec![crate::legado::LegadoValue::String(item.clone())];
+                        self.run_rule_first(rule, item, &ctx)
+                            .map(|v| !v.is_empty() && v != "false" && v != "0")
+                    })
+                    .collect()
             })
             .unwrap_or_else(|| vec![None; item_contexts.len()]);
         (names, urls, vips)
     }
 
     /// 获取章节内容
-    pub async fn get_chapter_content(&self, source: &BookSource, chapter_url: &str) -> Option<ChapterContent> {
+    pub async fn get_chapter_content(
+        &self,
+        source: &BookSource,
+        chapter_url: &str,
+    ) -> Option<ChapterContent> {
         const MAX_CONTENT_PAGES: usize = 50;
 
         let initial_url = crate::utils::build_full_url(&source.url, chapter_url);
@@ -671,8 +827,12 @@ impl BookSourceParser {
                 Err(e) => {
                     if first_page {
                         if e.starts_with("WEBVIEW_REQUIRED") {
-                            let (web_js, source_regex, content_rule) = source.rule_content.as_ref()
-                                .map(|r| (r.web_js.clone(), r.source_regex.clone(), r.content.clone()))
+                            let (web_js, source_regex, content_rule) = source
+                                .rule_content
+                                .as_ref()
+                                .map(|r| {
+                                    (r.web_js.clone(), r.source_regex.clone(), r.content.clone())
+                                })
                                 .unwrap_or((None, None, None));
                             return Some(ChapterContent {
                                 chapter_id: uuid::Uuid::new_v4().to_string(),
@@ -683,7 +843,9 @@ impl BookSourceParser {
                                     content_rule,
                                     web_js,
                                     source_regex,
-                                    headers: parse_source_headers(source.header.as_deref()).into_iter().collect(),
+                                    headers: parse_source_headers(source.header.as_deref())
+                                        .into_iter()
+                                        .collect(),
                                     user_agent: source_user_agent(source.header.as_deref()),
                                 }),
                             });
@@ -701,11 +863,17 @@ impl BookSourceParser {
                 source,
             );
             let mut context = context;
-            context.set_variable("chapter", crate::legado::LegadoValue::Map(chapter_context_map(&url, chapter_url)));
+            context.set_variable(
+                "chapter",
+                crate::legado::LegadoValue::Map(chapter_context_map(&url, chapter_url)),
+            );
 
             if let Some(rule) = &source.rule_content {
                 if rule.web_js.as_deref().is_some_and(|s| !s.trim().is_empty())
-                    || rule.source_regex.as_deref().is_some_and(|s| !s.trim().is_empty())
+                    || rule
+                        .source_regex
+                        .as_deref()
+                        .is_some_and(|s| !s.trim().is_empty())
                 {
                     warn!("正文规则需要平台 WebView/sourceRegex 支持: {}", url);
                     return Some(ChapterContent {
@@ -717,7 +885,9 @@ impl BookSourceParser {
                             content_rule: rule.content.clone(),
                             web_js: rule.web_js.clone(),
                             source_regex: rule.source_regex.clone(),
-                            headers: parse_source_headers(source.header.as_deref()).into_iter().collect(),
+                            headers: parse_source_headers(source.header.as_deref())
+                                .into_iter()
+                                .collect(),
                             user_agent: source_user_agent(source.header.as_deref()),
                         }),
                     });
@@ -730,21 +900,33 @@ impl BookSourceParser {
                     let parsed = if content_str.contains("{{") {
                         crate::legado::url::resolve_rule_template(content_str, &html, &context)
                     } else if content_str.trim_start().starts_with("@js:") {
-                        if let Some(content) = self.run_rule_first_blocking(content_str, &html, &context).await.filter(|s| !s.is_empty()) {
+                        if let Some(content) = self
+                            .run_rule_first_blocking(content_str, &html, &context)
+                            .await
+                            .filter(|s| !s.is_empty())
+                        {
                             content
                         } else {
-                            self.execute_legado_content_script(source, &url, content_str, &html).await
+                            self.execute_legado_content_script(source, &url, content_str, &html)
+                                .await
                                 .unwrap_or_default()
                         }
                     } else {
                         self.run_rule_first(content_str, &html, &context)
                             .unwrap_or_default()
                     };
-                    let nexts: Vec<String> = rule.next_content_url.as_deref()
+                    let nexts: Vec<String> = rule
+                        .next_content_url
+                        .as_deref()
                         .map(|r| {
                             if r.contains("{{") {
-                                let resolved = crate::legado::url::resolve_rule_template(r, &html, &context);
-                                if resolved.is_empty() { Vec::new() } else { vec![resolved] }
+                                let resolved =
+                                    crate::legado::url::resolve_rule_template(r, &html, &context);
+                                if resolved.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    vec![resolved]
+                                }
                             } else {
                                 self.run_rule(r, &html, &context).unwrap_or_default()
                             }
@@ -767,6 +949,8 @@ impl BookSourceParser {
             if let Some(first_next) = next_urls.first() {
                 let full_next = crate::utils::build_full_url(&url, first_next);
                 final_next_chapter_url = Some(full_next);
+            } else {
+                final_next_chapter_url = None;
             }
             for next in next_urls {
                 if !next.is_empty() {
@@ -782,12 +966,8 @@ impl BookSourceParser {
             return None;
         }
 
-        let mut content = if let Some(ref js_lib) = source.js_lib {
-            let ctx = crate::script_engine::ScriptContext::new(
-                "",
-                &all_content,
-                chapter_url,
-            );
+        let content = if let Some(ref js_lib) = source.js_lib {
+            let ctx = crate::script_engine::ScriptContext::new("", &all_content, chapter_url);
             match self.script_engine.eval(js_lib, Some(&ctx)) {
                 Ok(result) => result.as_string().unwrap_or(all_content),
                 Err(_) => all_content,
@@ -811,7 +991,10 @@ impl BookSourceParser {
         script: &str,
     ) -> Option<Vec<JsonValue>> {
         if !script.contains("/novel/clist/") || !script.contains("java.post") {
-            warn!("暂不支持的目录 JS 规则: {}", script.chars().take(80).collect::<String>());
+            warn!(
+                "暂不支持的目录 JS 规则: {}",
+                script.chars().take(80).collect::<String>()
+            );
             return None;
         }
 
@@ -823,11 +1006,15 @@ impl BookSourceParser {
             .to_string();
         let url = crate::utils::build_full_url(&source.url, "/novel/clist/");
         let body = format!("bid={}", bid);
-        let text = self.http_client
+        let text = self
+            .http_client
             .post(
                 &url,
                 &body,
-                &[("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string())],
+                &[(
+                    "Content-Type".to_string(),
+                    "application/x-www-form-urlencoded".to_string(),
+                )],
                 None,
             )
             .await
@@ -879,7 +1066,10 @@ impl BookSourceParser {
         html: &str,
     ) -> Option<String> {
         if !script.contains("challenge") || !script.contains("java.ajax") {
-            warn!("暂不支持的正文 JS 规则: {}", script.chars().take(80).collect::<String>());
+            warn!(
+                "暂不支持的正文 JS 规则: {}",
+                script.chars().take(80).collect::<String>()
+            );
             return None;
         }
 
@@ -925,8 +1115,8 @@ impl BookSourceParser {
                 cookie_jar,
                 default_headers,
             )
-                .ok()
-                .and_then(|values| values.into_iter().next())
+            .ok()
+            .and_then(|values| values.into_iter().next())
         })
         .await
         .ok()
@@ -950,6 +1140,25 @@ fn can_fallback_to_legacy_rule_engine(rule: &str) -> bool {
         || trimmed.starts_with("@get."))
 }
 
+fn list_context_rule(rule: &str) -> String {
+    let trimmed = rule.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("@js:")
+        || trimmed.starts_with("js:")
+        || trimmed.starts_with("$.")
+        || trimmed.starts_with("$[")
+        || trimmed.contains("@html")
+        || trimmed.contains("@all")
+        || trimmed.contains("@text")
+        || trimmed.contains("@href")
+        || trimmed.contains("@src")
+        || trimmed.contains("@content")
+    {
+        return trimmed.to_string();
+    }
+    format!("{trimmed}@html")
+}
+
 fn resolve_source_url(
     source: &BookSource,
     legado_url: &crate::legado::url::LegadoUrl,
@@ -959,7 +1168,10 @@ fn resolve_source_url(
     crate::legado::url::resolve_url_template(legado_url, keyword, page, &source.url)
 }
 
-fn rule_context_with_src(mut context: crate::legado::RuleContext, html: &str) -> crate::legado::RuleContext {
+fn rule_context_with_src(
+    mut context: crate::legado::RuleContext,
+    html: &str,
+) -> crate::legado::RuleContext {
     context.src = html.to_string();
     context
 }
@@ -974,7 +1186,10 @@ fn rule_context_with_source_headers(
             .into_iter()
             .map(|(key, value)| (key, crate::legado::LegadoValue::String(value)))
             .collect();
-        context.variables.insert("__source_header".into(), crate::legado::LegadoValue::Map(map));
+        context.variables.insert(
+            "__source_header".into(),
+            crate::legado::LegadoValue::Map(map),
+        );
     }
     context
 }
@@ -997,9 +1212,15 @@ async fn execute_book_info_init(
 
     let init_values = match tokio::task::spawn_blocking(move || {
         crate::legado::execute_legado_rule_values_with_http_state(
-            &rule, &html_owned, &context_clone, cookie_jar, default_headers,
+            &rule,
+            &html_owned,
+            &context_clone,
+            cookie_jar,
+            default_headers,
         )
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(values)) => values,
         _ => return (html.to_string(), context.clone(), false),
     };
@@ -1011,10 +1232,8 @@ async fn execute_book_info_init(
     if init_values.len() == 1 {
         if let crate::legado::LegadoValue::Map(_) = &init_values[0] {
             let json_str = init_values[0].to_json_value().to_string();
-            let init_context = crate::legado::RuleContext::for_book_info(
-                &context.base_url,
-                &json_str,
-            );
+            let init_context =
+                crate::legado::RuleContext::for_book_info(&context.base_url, &json_str);
             return (json_str, init_context, true);
         }
     }
@@ -1026,10 +1245,8 @@ async fn execute_book_info_init(
 
     if let Ok(init_json) = serde_json::from_str::<JsonValue>(&init_result) {
         if init_json.is_object() {
-            let init_context = crate::legado::RuleContext::for_book_info(
-                &context.base_url,
-                &init_result,
-            );
+            let init_context =
+                crate::legado::RuleContext::for_book_info(&context.base_url, &init_result);
             return (init_result, init_context, true);
         }
     }
@@ -1096,7 +1313,8 @@ fn execute_chapter_list_js_rule(
         context,
         cookie_jar,
         context_default_headers(context),
-    ).ok()?;
+    )
+    .ok()?;
     let items: Vec<JsonValue> = values
         .into_iter()
         .map(|value| value.to_json_value())
@@ -1122,18 +1340,42 @@ fn context_default_headers(context: &crate::legado::RuleContext) -> Vec<(String,
         .unwrap_or_default()
 }
 
-fn chapter_context_map(current_url: &str, original_url: &str) -> std::collections::HashMap<String, crate::legado::LegadoValue> {
+fn chapter_context_map(
+    current_url: &str,
+    original_url: &str,
+) -> std::collections::HashMap<String, crate::legado::LegadoValue> {
     let mut map = std::collections::HashMap::new();
-    map.insert("url".into(), crate::legado::LegadoValue::String(current_url.to_string()));
-    map.insert("baseUrl".into(), crate::legado::LegadoValue::String(current_url.to_string()));
-    map.insert("bookUrl".into(), crate::legado::LegadoValue::String(original_url.to_string()));
-    map.insert("title".into(), crate::legado::LegadoValue::String(String::new()));
+    map.insert(
+        "url".into(),
+        crate::legado::LegadoValue::String(current_url.to_string()),
+    );
+    map.insert(
+        "baseUrl".into(),
+        crate::legado::LegadoValue::String(current_url.to_string()),
+    );
+    map.insert(
+        "bookUrl".into(),
+        crate::legado::LegadoValue::String(original_url.to_string()),
+    );
+    map.insert(
+        "title".into(),
+        crate::legado::LegadoValue::String(String::new()),
+    );
     map.insert("index".into(), crate::legado::LegadoValue::Int(0));
-    map.insert("resourceUrl".into(), crate::legado::LegadoValue::String(String::new()));
-    map.insert("tag".into(), crate::legado::LegadoValue::String(String::new()));
+    map.insert(
+        "resourceUrl".into(),
+        crate::legado::LegadoValue::String(String::new()),
+    );
+    map.insert(
+        "tag".into(),
+        crate::legado::LegadoValue::String(String::new()),
+    );
     map.insert("start".into(), crate::legado::LegadoValue::Int(0));
     map.insert("end".into(), crate::legado::LegadoValue::Int(0));
-    map.insert("variable".into(), crate::legado::LegadoValue::Map(std::collections::HashMap::new()));
+    map.insert(
+        "variable".into(),
+        crate::legado::LegadoValue::Map(std::collections::HashMap::new()),
+    );
     map.insert("isVip".into(), crate::legado::LegadoValue::Bool(false));
     map.insert("is_vip".into(), crate::legado::LegadoValue::Bool(false));
     map
@@ -1141,26 +1383,34 @@ fn chapter_context_map(current_url: &str, original_url: &str) -> std::collection
 
 fn resolve_image_src_headers(content: &str, base_url: &str) -> String {
     let img_re = regex::Regex::new(r#"<img\s+[^>]*src="([^"]*)"[^>]*>"#).unwrap();
-    img_re.replace_all(content, |caps: &regex::Captures| -> String {
-        let full_match = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-        let src = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        if let Some(comma_idx) = src.find(",{") {
-            let url = &src[..comma_idx];
-            let resolved = if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("data:") {
-                crate::utils::build_full_url(base_url, url)
+    img_re
+        .replace_all(content, |caps: &regex::Captures| -> String {
+            let full_match = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+            let src = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(comma_idx) = src.find(",{") {
+                let url = &src[..comma_idx];
+                let resolved = if !url.starts_with("http://")
+                    && !url.starts_with("https://")
+                    && !url.starts_with("data:")
+                {
+                    crate::utils::build_full_url(base_url, url)
+                } else {
+                    url.to_string()
+                };
+                full_match.replace(src, &resolved)
             } else {
-                url.to_string()
-            };
-            full_match.replace(src, &resolved)
-        } else {
-            let resolved = if !src.starts_with("http://") && !src.starts_with("https://") && !src.starts_with("data:") {
-                crate::utils::build_full_url(base_url, src)
-            } else {
-                src.to_string()
-            };
-            full_match.replace(src, &resolved)
-        }
-    }).to_string()
+                let resolved = if !src.starts_with("http://")
+                    && !src.starts_with("https://")
+                    && !src.starts_with("data:")
+                {
+                    crate::utils::build_full_url(base_url, src)
+                } else {
+                    src.to_string()
+                };
+                full_match.replace(src, &resolved)
+            }
+        })
+        .to_string()
 }
 
 async fn execute_chapter_list_js_rule_blocking(
@@ -1172,10 +1422,12 @@ async fn execute_chapter_list_js_rule_blocking(
     let rule = rule.to_string();
     let html = html.to_string();
     let context = context.clone();
-    tokio::task::spawn_blocking(move || execute_chapter_list_js_rule(&rule, &html, &context, cookie_jar))
-        .await
-        .ok()
-        .flatten()
+    tokio::task::spawn_blocking(move || {
+        execute_chapter_list_js_rule(&rule, &html, &context, cookie_jar)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 fn extract_from_contexts(
@@ -1194,7 +1446,11 @@ fn extract_from_contexts(
             context.result = vec![crate::legado::LegadoValue::String(item.clone())];
             if rule.contains("{{") {
                 let resolved = crate::legado::url::resolve_rule_template(rule, item, &context);
-                if resolved.is_empty() { None } else { Some(resolved) }
+                if resolved.is_empty() {
+                    None
+                } else {
+                    Some(resolved)
+                }
             } else {
                 parser.run_rule_first(rule, item, &context)
             }
@@ -1255,7 +1511,7 @@ pub async fn search_book(source: &BookSource, keyword: &str) -> Vec<SearchResult
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{BookSource, SearchRule, BookInfoRule, ContentRule};
+    use crate::types::{BookInfoRule, BookSource, ContentRule, SearchRule};
 
     #[tokio::test]
     async fn test_search_books() {
@@ -1340,7 +1596,10 @@ mod tests {
             platform_request: None,
         };
         assert_eq!(content.content, "test content");
-        assert_eq!(content.next_chapter_url, Some("https://next.example.com/ch2".into()));
+        assert_eq!(
+            content.next_chapter_url,
+            Some("https://next.example.com/ch2".into())
+        );
     }
 
     #[tokio::test]
@@ -1468,7 +1727,12 @@ mod tests {
         let parser = BookSourceParser::new();
         let results = parser.search(&source, "test").await;
 
-        assert_eq!(results.len(), 2, "expected 2 results, got {}", results.len());
+        assert_eq!(
+            results.len(),
+            2,
+            "expected 2 results, got {}",
+            results.len()
+        );
         assert_eq!(results[0].name, "Test Book");
         assert_eq!(results[0].author, "Test Author");
         assert_eq!(results[0].book_url, server.url("/book/123"));
@@ -1536,7 +1800,10 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Template Book");
         assert_eq!(results[0].book_url, "https://example.test/book/42");
-        assert_eq!(results[0].cover_url, Some("https://img.example.test/covers/42.jpg".into()));
+        assert_eq!(
+            results[0].cover_url,
+            Some("https://img.example.test/covers/42.jpg".into())
+        );
         mock.assert();
     }
 
@@ -1734,8 +2001,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_chapters_uses_generic_js_rule_result() {
-        use httpmock::prelude::*;
         use crate::types::TocRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -1750,13 +2017,16 @@ mod tests {
             name: "Test Source".into(),
             url: server.base_url(),
             rule_toc: Some(TocRule {
-                chapter_list: Some(r#"@js:
+                chapter_list: Some(
+                    r#"@js:
                     var chapters = [
                         {"title":"Chapter A","url":"/a.html"},
                         {"title":"Chapter B","url":"/b.html"}
                     ];
                     chapters;
-                "#.into()),
+                "#
+                    .into(),
+                ),
                 chapter_name: Some("title".into()),
                 chapter_url: Some("url".into()),
                 ..Default::default()
@@ -1836,7 +2106,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let content = parser.get_chapter_content(&source, "/chapter/1").await.unwrap();
+        let content = parser
+            .get_chapter_content(&source, "/chapter/1")
+            .await
+            .unwrap();
 
         assert_eq!(content.content, "Generic JS Content");
         mock.assert();
@@ -1844,8 +2117,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_chapters_generic_js_rule_can_use_java_post() {
-        use httpmock::prelude::*;
         use crate::types::TocRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let page_mock = server.mock(|when, then| {
@@ -1864,11 +2137,14 @@ mod tests {
             name: "Test Source".into(),
             url: server.base_url(),
             rule_toc: Some(TocRule {
-                chapter_list: Some(r#"@js:
+                chapter_list: Some(
+                    r#"@js:
                     var bid = baseUrl.match(/read\/(\d+)/)[1];
                     var resp = java.post(source.getKey() + "/novel/clist/", "bid=" + bid, {});
                     JSON.parse(resp.body()).data;
-                "#.into()),
+                "#
+                    .into(),
+                ),
                 chapter_name: Some("title".into()),
                 chapter_url: Some("url".into()),
                 ..Default::default()
@@ -1918,7 +2194,9 @@ mod tests {
                 .body("<html><script>var token = \"abc\";</script></html>");
         });
         let ajax_mock = server.mock(|when, then| {
-            when.method(GET).path("/ajax").query_param("challenge", "abc");
+            when.method(GET)
+                .path("/ajax")
+                .query_param("challenge", "abc");
             then.status(200)
                 .header("Content-Type", "text/html; charset=utf-8")
                 .body("<section><p>Ajax Content</p></section>");
@@ -1959,7 +2237,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let content = parser.get_chapter_content(&source, "/chapter/2").await.unwrap();
+        let content = parser
+            .get_chapter_content(&source, "/chapter/2")
+            .await
+            .unwrap();
 
         assert_eq!(content.content, "Ajax Content");
         page_mock.assert();
@@ -2010,7 +2291,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let content = parser.get_chapter_content(&source, "/chapter/cookie").await.unwrap();
+        let content = parser
+            .get_chapter_content(&source, "/chapter/cookie")
+            .await
+            .unwrap();
 
         assert_eq!(content.content, "parser-cookie");
         page_mock.assert();
@@ -2063,7 +2347,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let content = parser.get_chapter_content(&source, "/chapter/header").await.unwrap();
+        let content = parser
+            .get_chapter_content(&source, "/chapter/header")
+            .await
+            .unwrap();
 
         assert_eq!(content.content, "header-ok");
         page_mock.assert();
@@ -2117,7 +2404,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let content = parser.get_chapter_content(&source, "/chapter/override").await.unwrap();
+        let content = parser
+            .get_chapter_content(&source, "/chapter/override")
+            .await
+            .unwrap();
 
         assert_eq!(content.content, "override-ok");
         page_mock.assert();
@@ -2126,8 +2416,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_book_info_init_js_returns_object() {
-        use httpmock::prelude::*;
         use crate::types::BookInfoRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -2142,7 +2432,9 @@ mod tests {
             name: "Test Source".into(),
             url: server.base_url(),
             rule_book_info: Some(BookInfoRule {
-                book_info_init: Some("@js:\nreturn {a:'Init Name',b:'Init Author',h:'/toc/list.html'}".into()),
+                book_info_init: Some(
+                    "@js:\nreturn {a:'Init Name',b:'Init Author',h:'/toc/list.html'}".into(),
+                ),
                 name: Some("a".into()),
                 author: Some("b".into()),
                 toc_url: Some("h".into()),
@@ -2180,8 +2472,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_book_info_toc_url_selector() {
-        use httpmock::prelude::*;
         use crate::types::BookInfoRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -2231,8 +2523,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_book_info_init_all_in_one_regex() {
-        use httpmock::prelude::*;
         use crate::types::BookInfoRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -2247,9 +2539,12 @@ mod tests {
             name: "Test Source".into(),
             url: server.base_url(),
             rule_book_info: Some(BookInfoRule {
-                book_info_init: Some(r#"@js:
+                book_info_init: Some(
+                    r#"@js:
     return {a:'Regex Name',b:'Regex Author'}
-"#.into()),
+"#
+                    .into(),
+                ),
                 name: Some("a".into()),
                 author: Some("b".into()),
                 ..Default::default()
@@ -2285,8 +2580,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_chapters_multi_page_via_next_toc_url() {
-        use httpmock::prelude::*;
         use crate::types::TocRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let page1_mock = server.mock(|when, then| {
@@ -2352,8 +2647,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_content_pagination_multi_page() {
-        use httpmock::prelude::*;
         use crate::types::ContentRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let page1_mock = server.mock(|when, then| {
@@ -2403,18 +2698,30 @@ mod tests {
         let result = parser.get_chapter_content(&source, "/ch/page1").await;
         assert!(result.is_some(), "expected chapter content, got None");
         let chapter = result.unwrap();
-        assert!(chapter.content.contains("Page 1 content"), "should contain page 1");
-        assert!(chapter.content.contains("Page 2 content"), "should contain page 2");
-        assert!(chapter.content.contains("\n"), "pages should be separated by newline");
-        assert!(chapter.next_chapter_url.is_none(), "no next chapter when pagination ends");
+        assert!(
+            chapter.content.contains("Page 1 content"),
+            "should contain page 1"
+        );
+        assert!(
+            chapter.content.contains("Page 2 content"),
+            "should contain page 2"
+        );
+        assert!(
+            chapter.content.contains("\n"),
+            "pages should be separated by newline"
+        );
+        assert!(
+            chapter.next_chapter_url.is_none(),
+            "no next chapter when pagination ends"
+        );
         page1_mock.assert();
         page2_mock.assert();
     }
 
     #[tokio::test]
     async fn test_book_info_toc_url_template_resolution() {
-        use httpmock::prelude::*;
         use crate::types::BookInfoRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -2456,7 +2763,10 @@ mod tests {
         };
 
         let parser = BookSourceParser::new();
-        let detail = parser.get_book_info(&source, "/book/template").await.unwrap();
+        let detail = parser
+            .get_book_info(&source, "/book/template")
+            .await
+            .unwrap();
 
         assert_eq!(detail.name, "Test Book");
         assert_eq!(detail.author, "Author Name");
@@ -2566,8 +2876,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_explore_with_rule_explore() {
-        use httpmock::prelude::*;
         use crate::types::SearchRule;
+        use httpmock::prelude::*;
 
         let server = MockServer::start();
         let mock = server.mock(|when, then| {

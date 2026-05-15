@@ -50,10 +50,10 @@
 //!   @tag.xxx               → xxx
 //!   children               → * (保留特殊处理)
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
-use chrono::Utc;
 
 /// Legado 书源 JSON 导出格式
 #[derive(Debug, Clone, Deserialize)]
@@ -65,16 +65,28 @@ pub struct LegadoBookSource {
     #[serde(rename = "bookSourceName")]
     pub name: String,
 
-    #[serde(rename = "bookSourceGroup", default, deserialize_with = "string_from_any")]
+    #[serde(
+        rename = "bookSourceGroup",
+        default,
+        deserialize_with = "string_from_any"
+    )]
     pub group_name: String,
 
     #[serde(rename = "bookSourceType", default)]
     pub source_type: i32,
 
-    #[serde(rename = "bookSourceComment", default, deserialize_with = "string_from_any")]
+    #[serde(
+        rename = "bookSourceComment",
+        default,
+        deserialize_with = "string_from_any"
+    )]
     pub comment: String,
 
-    #[serde(rename = "bookUrlPattern", default, deserialize_with = "string_from_any")]
+    #[serde(
+        rename = "bookUrlPattern",
+        default,
+        deserialize_with = "string_from_any"
+    )]
     pub book_url_pattern: String,
 
     // ── 启停与权重 ──
@@ -97,17 +109,29 @@ pub struct LegadoBookSource {
     #[serde(default, deserialize_with = "option_string_from_any")]
     pub header: Option<String>,
 
-    #[serde(rename = "loginUrl", default, deserialize_with = "option_string_from_any")]
+    #[serde(
+        rename = "loginUrl",
+        default,
+        deserialize_with = "option_string_from_any"
+    )]
     pub login_url: Option<String>,
 
     #[serde(rename = "jsLib", default, deserialize_with = "option_string_from_any")]
     pub js_lib: Option<String>,
 
     // ── 搜索与发现 ──
-    #[serde(rename = "searchUrl", default, deserialize_with = "option_string_from_any")]
+    #[serde(
+        rename = "searchUrl",
+        default,
+        deserialize_with = "option_string_from_any"
+    )]
     pub search_url: Option<String>,
 
-    #[serde(rename = "exploreUrl", default, deserialize_with = "option_string_from_any")]
+    #[serde(
+        rename = "exploreUrl",
+        default,
+        deserialize_with = "option_string_from_any"
+    )]
     pub explore_url: Option<String>,
 
     // ── 规则对象 ──
@@ -239,7 +263,7 @@ fn legado_to_imported(source: &LegadoBookSource) -> Result<ImportedSource, Strin
         login_url: source.login_url.clone(),
         header: source.header.clone(),
         js_lib: source.js_lib.clone(),
-        search_url: source.search_url.clone(),
+        search_url: source.search_url.as_deref().map(clean_legado_url),
         explore_url: source.explore_url.clone(),
         enabled_cookie_jar: source.enabled_cookie_jar,
         enabled_explore: source.enabled_explore,
@@ -255,10 +279,7 @@ fn legado_to_imported(source: &LegadoBookSource) -> Result<ImportedSource, Strin
 
 /// 合并顶层 searchUrl 到 rule_search JSON 对象。
 /// 如果 rule_search 中已有 search_url 字段，则不覆盖。
-fn merge_search_url(
-    rule_search: Option<JsonValue>,
-    search_url: Option<&str>,
-) -> Option<JsonValue> {
+fn merge_search_url(rule_search: Option<JsonValue>, search_url: Option<&str>) -> Option<JsonValue> {
     let mut value = rule_search.unwrap_or_else(|| JsonValue::Object(serde_json::Map::new()));
     if let (Some(url), Some(obj)) = (search_url, value.as_object_mut()) {
         if !obj.contains_key("search_url") {
@@ -283,9 +304,13 @@ fn normalize_rule_values(mut value: JsonValue) -> JsonValue {
     normalize_rule_keys(obj);
 
     // 第二步：规则值规范化（仅对字符串值）
-    for val in obj.values_mut() {
+    for (key, val) in obj.iter_mut() {
         if let Some(rule_str) = val.as_str() {
-            let normalized = normalize_legado_rule(rule_str);
+            let normalized = if key == "search_url" {
+                clean_legado_url(rule_str)
+            } else {
+                normalize_legado_rule(rule_str)
+            };
             *val = JsonValue::String(normalized);
         }
     }
@@ -457,8 +482,8 @@ fn normalize_selector_segment(segment: &str) -> String {
             // 最后一段可能是提取类型，也可能是 HTMl属性名
             // 如果匹配已知提取类型，保留
             match *part {
-                "text" | "textNodes" | "textNode" | "ownText" | "html" | "all" | "href"
-                | "src" | "content" => {
+                "text" | "textNodes" | "textNode" | "ownText" | "html" | "all" | "href" | "src"
+                | "content" => {
                     // 把前面的规范化部分和提取后缀拼接
                     let selector = normalized_parts.join("@");
                     return format!("{}@{}", selector, part);
@@ -526,59 +551,86 @@ fn clean_legado_url(url: &str) -> String {
 mod tests {
     use super::*;
 
-    const AXDZS: &str = include_str!("../../../../sy/axdzs.json");
-    const SY_AXDZS: &str = AXDZS;
-    const SY_SDG: &str = include_str!("../../../../sy/sdg.json");
-    const SY_22BIQU: &str = include_str!("../../../../sy/22biqu - grok.json");
-    const SY_COLLECTION: &str = include_str!("../../../../sy/1778070297.json");
+    fn read_fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core-source should be inside core")
+            .parent()
+            .expect("core should be inside repository root")
+            .join("sy")
+            .join(name);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("missing fixture {}: {}", path.display(), err))
+    }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_import_real_axdzs_source() {
-        let imported = import_legado_source(AXDZS).unwrap();
+        let json = read_fixture("axdzs.json");
+        let imported = import_legado_source(&json).unwrap();
         assert_eq!(imported.len(), 1);
 
         let source = &imported[0];
         assert_eq!(source.name, "爱下电子书");
         assert_eq!(source.url, "https://ixdzs8.com");
-        assert_eq!(source.search_url.as_deref(), Some("/bsearch?q={{key}}&page={{page}}"));
+        assert_eq!(
+            source.search_url.as_deref(),
+            Some("/bsearch?q={{key}}&page={{page}}")
+        );
         assert!(source.enabled_cookie_jar);
         assert!(source.enabled_explore);
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_axdzs_rule_search_normalization() {
-        let imported = import_legado_source(AXDZS).unwrap();
-        let rule_search: serde_json::Value = serde_json::from_str(
-            imported[0].rule_search.as_deref().unwrap(),
-        )
-        .unwrap();
+        let json = read_fixture("axdzs.json");
+        let imported = import_legado_source(&json).unwrap();
+        let rule_search: serde_json::Value =
+            serde_json::from_str(imported[0].rule_search.as_deref().unwrap()).unwrap();
 
         assert_eq!(rule_search["book_list"], ".u-list@li");
         assert_eq!(rule_search["author"], ".bauthor@a@text");
         assert_eq!(rule_search["book_url"], "a@href");
         assert_eq!(rule_search["name"], "a@title");
-        assert_eq!(rule_search["search_url"], "/bsearch?q={{key}}&page={{page}}");
+        assert_eq!(
+            rule_search["search_url"],
+            "/bsearch?q={{key}}&page={{page}}"
+        );
 
         let cover = rule_search["cover_url"].as_str().unwrap();
-        assert!(cover.starts_with("img@src\n@js:"), "cover rule should preserve multiline @js, got {cover}");
+        assert!(
+            cover.starts_with("img@src\n@js:"),
+            "cover rule should preserve multiline @js, got {cover}"
+        );
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_axdzs_js_rules_preserved() {
-        let imported = import_legado_source(AXDZS).unwrap();
-        let rule_content: serde_json::Value = serde_json::from_str(
-            imported[0].rule_content.as_deref().unwrap(),
-        )
-        .unwrap();
-        let rule_toc: serde_json::Value = serde_json::from_str(
-            imported[0].rule_toc.as_deref().unwrap(),
-        )
-        .unwrap();
+        let json = read_fixture("axdzs.json");
+        let imported = import_legado_source(&json).unwrap();
+        let rule_content: serde_json::Value =
+            serde_json::from_str(imported[0].rule_content.as_deref().unwrap()).unwrap();
+        let rule_toc: serde_json::Value =
+            serde_json::from_str(imported[0].rule_toc.as_deref().unwrap()).unwrap();
 
-        assert!(rule_content["content"].as_str().unwrap().starts_with("@js:"));
-        assert!(rule_content["content"].as_str().unwrap().contains("java.ajax"));
-        assert!(rule_toc["chapter_list"].as_str().unwrap().starts_with("@js:"));
-        assert!(rule_toc["chapter_list"].as_str().unwrap().contains("java.post"));
+        assert!(rule_content["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("@js:"));
+        assert!(rule_content["content"]
+            .as_str()
+            .unwrap()
+            .contains("java.ajax"));
+        assert!(rule_toc["chapter_list"]
+            .as_str()
+            .unwrap()
+            .starts_with("@js:"));
+        assert!(rule_toc["chapter_list"]
+            .as_str()
+            .unwrap()
+            .contains("java.post"));
     }
 
     #[test]
@@ -590,50 +642,68 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_import_all_sy_real_sources() {
-        for (name, json) in [
-            ("sy/axdzs.json", SY_AXDZS),
-            ("sy/sdg.json", SY_SDG),
-            ("sy/22biqu - grok.json", SY_22BIQU),
-            ("sy/1778070297.json", SY_COLLECTION),
-        ] {
-            let imported = import_legado_source(json).unwrap_or_else(|err| panic!("{name} import failed: {err}"));
-            assert!(!imported.is_empty(), "{name} should import at least one source");
-            assert!(imported.iter().all(|s| !s.name.is_empty()), "{name} contains empty source name");
-            assert!(imported.iter().all(|s| !s.url.is_empty()), "{name} contains empty source url");
+        let fixtures = [
+            ("axdzs.json", read_fixture("axdzs.json")),
+            ("sdg.json", read_fixture("sdg.json")),
+            ("22biqu - grok.json", read_fixture("22biqu - grok.json")),
+            ("1778070297.json", read_fixture("1778070297.json")),
+        ];
+        for (name, json) in fixtures {
+            let imported = import_legado_source(&json)
+                .unwrap_or_else(|err| panic!("{name} import failed: {err}"));
+            assert!(
+                !imported.is_empty(),
+                "{name} should import at least one source"
+            );
+            assert!(
+                imported.iter().all(|s| !s.name.is_empty()),
+                "{name} contains empty source name"
+            );
+            assert!(
+                imported.iter().all(|s| !s.url.is_empty()),
+                "{name} contains empty source url"
+            );
         }
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_import_sy_collection_contains_multiple_sources() {
-        let imported = import_legado_source(SY_COLLECTION).unwrap();
+        let json = read_fixture("1778070297.json");
+        let imported = import_legado_source(&json).unwrap();
         assert_eq!(imported.len(), 100, "collection should contain 100 sources");
         assert!(imported.iter().any(|s| s.name.contains("第一版主")));
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_sdg_rules_keep_inline_js_and_default_selectors() {
-        let imported = import_legado_source(SY_SDG).unwrap();
-        let book_info: serde_json::Value = serde_json::from_str(
-            imported[0].rule_book_info.as_deref().unwrap(),
-        )
-        .unwrap();
+        let json = read_fixture("sdg.json");
+        let imported = import_legado_source(&json).unwrap();
+        let book_info: serde_json::Value =
+            serde_json::from_str(imported[0].rule_book_info.as_deref().unwrap()).unwrap();
         assert_eq!(book_info["author"], ".itemtxt@p.1@a@text");
-        assert!(book_info["download_urls"].as_str().unwrap().contains("<js>"));
-        assert!(book_info["download_urls"].as_str().unwrap().contains("java.ajax"));
+        assert!(book_info["download_urls"]
+            .as_str()
+            .unwrap()
+            .contains("<js>"));
+        assert!(book_info["download_urls"]
+            .as_str()
+            .unwrap()
+            .contains("java.ajax"));
     }
 
     #[test]
+    #[ignore = "requires external sy/*.json fixtures"]
     fn test_22biqu_rules_keep_css_suffix_and_replace_regex() {
-        let imported = import_legado_source(SY_22BIQU).unwrap();
-        let book_info: serde_json::Value = serde_json::from_str(
-            imported[0].rule_book_info.as_deref().unwrap(),
-        )
-        .unwrap();
-        let content: serde_json::Value = serde_json::from_str(
-            imported[0].rule_content.as_deref().unwrap(),
-        )
-        .unwrap();
+        let json = read_fixture("22biqu - grok.json");
+        let imported = import_legado_source(&json).unwrap();
+        let book_info: serde_json::Value =
+            serde_json::from_str(imported[0].rule_book_info.as_deref().unwrap()).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(imported[0].rule_content.as_deref().unwrap()).unwrap();
         assert_eq!(book_info["author"], "meta[property$=author]@content");
         assert_eq!(content["content"], "#chaptercontent@html");
         assert!(content.get("replaceRegex").is_some() || content.get("replace_regex").is_some());
@@ -714,5 +784,60 @@ mod tests {
             serde_json::from_str(imported[0].rule_search.as_deref().unwrap()).unwrap();
         assert_eq!(search["intro"], "p.desc@text");
         assert_eq!(search["word_count"], "span.wc@text");
+    }
+
+    #[test]
+    fn test_import_inline_collection_preserves_real_rule_shapes() {
+        let json = r##"[
+            {
+                "bookSourceUrl": "https://one.example.com",
+                "bookSourceName": "One",
+                "searchUrl": "/search?q={{key}}, {\"charset\":\"utf-8\"}",
+                "ruleSearch": {
+                    "bookList": ".item",
+                    "name": "a@title",
+                    "coverUrl": "img@src\n@js:result"
+                },
+                "ruleBookInfo": {
+                    "author": "meta[property$=author]@content"
+                },
+                "ruleContent": {
+                    "content": "#chaptercontent@html",
+                    "replaceRegex": "<br>##\\n"
+                }
+            },
+            {
+                "bookSourceUrl": "https://two.example.com",
+                "bookSourceName": "Two",
+                "ruleToc": {
+                    "chapterList": "@js:java.ajax(baseUrl)",
+                    "chapterName": "<js>result</js>"
+                }
+            }
+        ]"##;
+
+        let imported = import_legado_source(json).unwrap();
+        assert_eq!(imported.len(), 2);
+        assert_eq!(imported[0].search_url.as_deref(), Some("/search?q={{key}}"));
+
+        let search: serde_json::Value =
+            serde_json::from_str(imported[0].rule_search.as_deref().unwrap()).unwrap();
+        assert_eq!(search["book_list"], ".item");
+        assert_eq!(search["name"], "a@title");
+        assert!(search["cover_url"].as_str().unwrap().contains("@js:result"));
+
+        let book_info: serde_json::Value =
+            serde_json::from_str(imported[0].rule_book_info.as_deref().unwrap()).unwrap();
+        assert_eq!(book_info["author"], "meta[property$=author]@content");
+
+        let content: serde_json::Value =
+            serde_json::from_str(imported[0].rule_content.as_deref().unwrap()).unwrap();
+        assert_eq!(content["content"], "#chaptercontent@html");
+        assert!(content.get("replaceRegex").is_some() || content.get("replace_regex").is_some());
+
+        let toc: serde_json::Value =
+            serde_json::from_str(imported[1].rule_toc.as_deref().unwrap()).unwrap();
+        assert!(toc["chapter_list"].as_str().unwrap().starts_with("@js:"));
+        assert!(toc["chapter_name"].as_str().unwrap().contains("<js>"));
     }
 }

@@ -96,7 +96,9 @@ class _SourcePageState extends ConsumerState<SourcePage> {
       itemCount: sources.length,
       itemBuilder: (context, index) {
         final source = sources[index];
-        final id = source['id'] as String;
+        final id = source['id'] is String ? source['id'] as String : '';
+        final validId = id.isNotEmpty;
+
         final enabled = source['enabled'] == true;
         final hasRules = source['rule_search'] != null || source['rule_toc'] != null || source['rule_content'] != null;
         return Card(
@@ -105,8 +107,8 @@ class _SourcePageState extends ConsumerState<SourcePage> {
             dense: true,
             leading: _selectMode
                 ? Checkbox(
-                    value: _selectedIds.contains(id),
-                    onChanged: (_) => _toggleSelect(id),
+                    value: validId && _selectedIds.contains(id),
+                    onChanged: validId ? (_) => _toggleSelect(id) : null,
                   )
                 : Icon(
                     enabled ? Icons.check_circle : Icons.cancel,
@@ -118,12 +120,12 @@ class _SourcePageState extends ConsumerState<SourcePage> {
                 ? null
                 : Switch(
                     value: enabled,
-                    onChanged: (val) => _toggleSource(id, val),
+                    onChanged: validId ? (val) => _toggleSource(id, val) : null,
                   ),
-            onTap: _selectMode
+            onTap: validId ? (_selectMode
                 ? () => _toggleSelect(id)
-                : () => _showSourceActions(context, source),
-            onLongPress: _selectMode ? null : () => _enterSelectMode(id),
+                : () => _showSourceActions(context, source)) : null,
+            onLongPress: _selectMode || !validId ? null : () => _enterSelectMode(id),
           ),
         );
       },
@@ -279,7 +281,8 @@ class _SourcePageState extends ConsumerState<SourcePage> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _deleteSource(source['id'] as String);
+              final sid = source['id'];
+              if (sid is String && sid.isNotEmpty) _deleteSource(sid);
             },
             child: const Text('删除', style: TextStyle(color: Colors.red)),
           ),
@@ -298,7 +301,7 @@ class _SourcePageState extends ConsumerState<SourcePage> {
       final dbPath = await ref.read(dbPathProvider.future);
       final resultJson = await rust_api.validateSourceFromDb(
         dbPath: dbPath,
-        sourceId: source['id'] as String,
+        sourceId: source['id'] ?? '',
       );
       final List<dynamic> issues = const JsonDecoder().convert(resultJson);
       if (!mounted) return;
@@ -319,7 +322,7 @@ class _SourcePageState extends ConsumerState<SourcePage> {
               itemCount: issues.length,
               itemBuilder: (_, i) {
                 final issue = issues[i] as Map<String, dynamic>;
-                final severity = issue['severity'] as String;
+                final severity = (issue['severity'] as String?) ?? '';
                 final Color color = severity == 'error'
                     ? Colors.red
                     : severity == 'warning'
@@ -332,9 +335,9 @@ class _SourcePageState extends ConsumerState<SourcePage> {
                         : Icons.info;
                 return ListTile(
                   leading: Icon(icon, color: color, size: 20),
-                  title: Text(issue['field'] as String,
+                  title: Text((issue['field'] as String?) ?? '',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                  subtitle: Text(issue['message'] as String,
+                  subtitle: Text((issue['message'] as String?) ?? '',
                       style: const TextStyle(fontSize: 13)),
                   dense: true,
                 );
@@ -406,8 +409,12 @@ class _SourcePageState extends ConsumerState<SourcePage> {
       );
       if (result == null || result.files.isEmpty) return;
 
-      final file = File(result.files.single.path!);
-      final json = await file.readAsString();
+      final single = result.files.single;
+      final json = single.path != null
+          ? await File(single.path!).readAsString()
+          : single.bytes != null
+              ? utf8.decode(single.bytes!)
+              : '';
       if (json.trim().isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -466,7 +473,8 @@ class _SourcePageState extends ConsumerState<SourcePage> {
     final sources = ref.read(allSourcesProvider).valueOrNull ?? [];
     setState(() {
       for (final s in sources) {
-        _selectedIds.add(s['id'] as String);
+        final id = s['id'];
+        if (id is String && id.isNotEmpty) _selectedIds.add(id);
       }
     });
   }

@@ -3,13 +3,13 @@
 //! 负责解析纯文本格式的书籍文件，支持自动编码检测。
 //! 对应原 Legado 的 TXT 解析功能 (modules/book/TxtChapterRule.kt)。
 
+use crate::cleaner::apply_replace_rules;
+use crate::Chapter;
+use encoding_rs::{Encoding, GB18030, UTF_8};
+use regex::{Regex, RegexBuilder};
 use std::fs;
 use std::path::Path;
-use encoding_rs::{UTF_8, GB18030, Encoding};
 use tracing::{debug, info, warn};
-use regex::{Regex, RegexBuilder};
-use crate::Chapter;
-use crate::cleaner::apply_replace_rules;
 
 /// TXT 解析器配置
 #[derive(Debug, Clone)]
@@ -32,8 +32,8 @@ impl Default for TxtParserConfig {
             chapter_regex: Some(chapter_regex.to_string()),
             remove_empty_lines: true,
             clean_rules: vec![
-                r"<[^>]+>".to_string(),  // 移除 HTML 标签
-                r"&nbsp;|&lt;|&gt;|&quot;|&amp;".to_string(),  // 转义字符
+                r"<[^>]+>".to_string(),                       // 移除 HTML 标签
+                r"&nbsp;|&lt;|&gt;|&quot;|&amp;".to_string(), // 转义字符
             ],
             replace_rules: vec![],
         }
@@ -56,34 +56,42 @@ impl TxtParser {
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<Chapter>, String> {
         let path = path.as_ref();
         info!("开始解析 TXT 文件: {:?}", path);
-        
+
         // 读取文件内容并检测编码
         let (content, encoding) = self.read_file_with_encoding(path)?;
         debug!("检测到编码: {}", encoding);
-        
+
         // 解析章节
         self.parse_content(&content)
     }
 
     /// 读取文件并自动检测编码
     fn read_file_with_encoding(&self, path: &Path) -> Result<(String, String), String> {
-        let bytes = fs::read(path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
-        
+        let max = 10 * 1024 * 1024;
+        let meta = fs::metadata(path).map_err(|e| format!("读取文件失败: {}", e))?;
+        if meta.len() > max {
+            return Err(format!("文件超过上限 {} 字节", max));
+        }
+        let bytes = fs::read(path).map_err(|e| format!("读取文件失败: {}", e))?;
+
         // 使用 core-net 的编码检测函数
         let (text, encoding) = detect_encoding_fallback(&bytes);
-        
+
         Ok((text, encoding.name().to_string()))
     }
 
     /// 解析文本内容，分割成章节
     fn parse_content(&self, content: &str) -> Result<Vec<Chapter>, String> {
         let mut chapters: Vec<Chapter> = Vec::new();
-        
+
         // 如果有章节正则，按章节分割
         if let Some(regex_str) = &self.config.chapter_regex {
-            match RegexBuilder::new(regex_str).multi_line(true).case_insensitive(true).build() {
-            Ok(re) => {
+            match RegexBuilder::new(regex_str)
+                .multi_line(true)
+                .case_insensitive(true)
+                .build()
+            {
+                Ok(re) => {
                     let mut last_end = 0;
                     let mut chapter_index = 0;
                     let mut current_title: Option<String> = None;
@@ -92,7 +100,8 @@ impl TxtParser {
                         if mat.start() > last_end {
                             let chapter_content = &content[last_end..mat.start()].trim();
                             if !chapter_content.is_empty() {
-                                let title = current_title.take().unwrap_or_else(|| "正文".to_string());
+                                let title =
+                                    current_title.take().unwrap_or_else(|| "正文".to_string());
                                 chapters.push(Chapter {
                                     title,
                                     content: self.clean_content(chapter_content),
@@ -111,7 +120,11 @@ impl TxtParser {
                         let remaining = content[last_end..].trim();
                         if !remaining.is_empty() {
                             let title = current_title.take().unwrap_or_else(|| {
-                                if chapter_index == 0 { "正文".to_string() } else { "最后一章".to_string() }
+                                if chapter_index == 0 {
+                                    "正文".to_string()
+                                } else {
+                                    "最后一章".to_string()
+                                }
                             });
                             chapters.push(Chapter {
                                 title,
@@ -141,7 +154,7 @@ impl TxtParser {
                 href: None,
             });
         }
-        
+
         info!("TXT 解析完成，共 {} 章", chapters.len());
         Ok(chapters)
     }
@@ -149,7 +162,7 @@ impl TxtParser {
     /// 清洗内容（移除多余空白、HTML 标签等）
     fn clean_content(&self, content: &str) -> String {
         let mut text = content.to_string();
-        
+
         // 应用清洗规则
         for rule in &self.config.clean_rules {
             if let Ok(re) = Regex::new(rule) {
@@ -167,7 +180,7 @@ impl TxtParser {
             let re = Regex::new(r"\n\s*\n\s*\n").unwrap();
             text = re.replace_all(&text, "\n\n").to_string();
         }
-        
+
         text.trim().to_string()
     }
 }
@@ -185,24 +198,26 @@ fn detect_encoding_fallback(bytes: &[u8]) -> (String, &'static Encoding) {
         let (text, _, _) = UTF_8.decode(&bytes[3..]);
         return (text.into_owned(), UTF_8);
     }
-    
+
     // 2. UTF-8 有效性检查（简化），非 UTF-8 时默认中文编码
     let mut utf8_valid = true;
 
     for window in bytes.windows(2) {
         if window[0] & 0x80 != 0
             && window[0] & 0xE0 == 0xC0
-                && window.len() > 1 && window[1] & 0xC0 != 0x80 {
-                    utf8_valid = false;
-                }
+            && window.len() > 1
+            && window[1] & 0xC0 != 0x80
+        {
+            utf8_valid = false;
+        }
     }
-    
+
     let encoding = if utf8_valid {
         UTF_8
     } else {
         GB18030 // 非 UTF-8 时默认中文编码
     };
-    
+
     let (text, _, _) = encoding.decode(bytes);
     (text.into_owned(), encoding)
 }
@@ -246,7 +261,11 @@ mod tests {
     fn test_txt_no_chapter_titles() {
         let dir = std::env::temp_dir();
         let path = dir.join("test_txt_nochap.txt");
-        std::fs::write(&path, "Plain text without any chapter markers.\nJust some content.\n").unwrap();
+        std::fs::write(
+            &path,
+            "Plain text without any chapter markers.\nJust some content.\n",
+        )
+        .unwrap();
         let parser = TxtParser::new(TxtParserConfig::default());
         let chapters = parser.parse_file(&path).unwrap();
         assert_eq!(chapters.len(), 1);

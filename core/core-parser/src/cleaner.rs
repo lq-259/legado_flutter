@@ -71,7 +71,7 @@ impl ContentCleaner {
                 Err(e) => return Err(format!("编译规则失败 '{}': {}", rule, e)),
             }
         }
-        
+
         Ok(Self {
             config,
             compiled_remove,
@@ -81,47 +81,48 @@ impl ContentCleaner {
     /// 清洗内容
     pub fn clean(&self, content: &str) -> String {
         let mut text = content.to_string();
-        
+
         // 1. 移除 HTML 标签
         if self.config.remove_html_tags {
-            let re = Regex::new(r"<[^>]+>").unwrap();
-            text = re.replace_all(&text, "").to_string();
+            static RE: std::sync::LazyLock<Regex> =
+                std::sync::LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+            text = RE.replace_all(&text, "").to_string();
         }
-        
+
         // 2. 解码 HTML 实体
         if self.config.decode_html_entities {
             text = self.decode_html_entities(&text);
         }
-        
+
         // 3. 应用移除规则
         for re in &self.compiled_remove {
             text = re.replace_all(&text, "").to_string();
         }
-        
+
         // 4. 应用替换规则
         for (find, replace) in &self.config.replace_rules {
             text = text.replace(find, replace);
         }
-        
+
         // 5. 移除空行
         if self.config.remove_empty_lines {
             let re = Regex::new(r"\n\s*\n\s*\n").unwrap();
             text = re.replace_all(&text, "\n\n").to_string();
         }
-        
+
         // 6. 合并多余空格
         if self.config.collapse_whitespace {
             let re = Regex::new(r"[ \t]+").unwrap();
             text = re.replace_all(&text, " ").to_string();
         }
-        
+
         text.trim().to_string()
     }
 
     /// 解码 HTML 实体
     fn decode_html_entities(&self, text: &str) -> String {
         let mut result = text.to_string();
-        
+
         // 常见 HTML 实体
         let entities = [
             ("&nbsp;", " "),
@@ -137,16 +138,19 @@ impl ContentCleaner {
             ("&ldquo;", "\""),
             ("&rdquo;", "\""),
         ];
-        
+
         for (entity, replacement) in &entities {
             result = result.replace(entity, replacement);
         }
-        
+
         result
     }
 
     /// 批量清洗章节内容
-    pub fn clean_chapters(&self, chapters: Vec<super::types::Chapter>) -> Vec<super::types::Chapter> {
+    pub fn clean_chapters(
+        &self,
+        chapters: Vec<super::types::Chapter>,
+    ) -> Vec<super::types::Chapter> {
         chapters
             .into_iter()
             .map(|mut chapter| {
@@ -173,7 +177,7 @@ pub fn clean_text(content: &str) -> String {
 /// 对应原 Legado 的 replaceRule 功能
 pub fn apply_replace_rules(content: &str, rules: &[(String, String)]) -> String {
     let mut text = content.to_string();
-    
+
     for (pattern, replacement) in rules {
         // 尝试作为正则替换
         if let Ok(re) = Regex::new(pattern) {
@@ -183,7 +187,7 @@ pub fn apply_replace_rules(content: &str, rules: &[(String, String)]) -> String 
             text = text.replace(pattern, replacement);
         }
     }
-    
+
     text
 }
 

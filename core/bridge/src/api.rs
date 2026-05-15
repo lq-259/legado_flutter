@@ -20,9 +20,10 @@ pub fn init_legado(db_path: String) -> Result<String, String> {
 
 /// 获取数据库版本
 pub fn get_db_version(db_path: String) -> Result<i32, String> {
-    let conn = core_storage::database::get_connection(&db_path)
-        .map_err(|e| format!("连接失败: {}", e))?;
-    Ok(conn.pragma_query_value(None, "user_version", |row| row.get(0))
+    let conn =
+        core_storage::database::get_connection(&db_path).map_err(|e| format!("连接失败: {}", e))?;
+    Ok(conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap_or(0))
 }
 
@@ -34,7 +35,9 @@ pub fn get_db_version(db_path: String) -> Result<i32, String> {
 pub fn get_all_books(db_path: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::book_dao::BookDao::new(&conn);
-    let books = dao.get_all().map_err(|e| format!("获取书籍列表失败: {}", e))?;
+    let books = dao
+        .get_all()
+        .map_err(|e| format!("获取书籍列表失败: {}", e))?;
     serde_json::to_string(&books).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -42,7 +45,9 @@ pub fn get_all_books(db_path: String) -> Result<String, String> {
 pub fn search_books_offline(db_path: String, keyword: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::book_dao::BookDao::new(&conn);
-    let books = dao.search(&keyword).map_err(|e| format!("搜索失败: {}", e))?;
+    let books = dao
+        .search(&keyword)
+        .map_err(|e| format!("搜索失败: {}", e))?;
     serde_json::to_string(&books).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -74,7 +79,9 @@ pub fn delete_book(db_path: String, id: String) -> Result<(), String> {
 pub fn get_all_sources(db_path: String) -> Result<String, String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
-    let sources = dao.get_all().map_err(|e| format!("获取书源列表失败: {}", e))?;
+    let sources = dao
+        .get_all()
+        .map_err(|e| format!("获取书源列表失败: {}", e))?;
     serde_json::to_string(&sources).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -82,7 +89,9 @@ pub fn get_all_sources(db_path: String) -> Result<String, String> {
 pub fn get_enabled_sources(db_path: String) -> Result<String, String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
-    let sources = dao.get_enabled().map_err(|e| format!("获取已启用书源失败: {}", e))?;
+    let sources = dao
+        .get_enabled()
+        .map_err(|e| format!("获取已启用书源失败: {}", e))?;
     serde_json::to_string(&sources).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -117,10 +126,11 @@ pub fn delete_source(db_path: String, id: String) -> Result<(), String> {
 /// 批量删除书源 (ids_json 为 JSON 字符串数组)
 pub fn delete_sources_batch(db_path: String, ids_json: String) -> Result<(), String> {
     let mut conn = open_db(&db_path)?;
-    let ids: Vec<String> = serde_json::from_str(&ids_json)
-        .map_err(|e| format!("JSON 解析失败: {}", e))?;
+    let ids: Vec<String> =
+        serde_json::from_str(&ids_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
-    dao.delete_batch(&ids).map_err(|e| format!("批量删除书源失败: {}", e))
+    dao.delete_batch(&ids)
+        .map_err(|e| format!("批量删除书源失败: {}", e))
 }
 
 /// 启用 / 禁用书源
@@ -135,7 +145,8 @@ pub fn set_source_enabled(db_path: String, id: String, enabled: bool) -> Result<
 pub fn import_sources_from_json(db_path: String, json: String) -> Result<i32, String> {
     let mut conn = open_db(&db_path)?;
     let mut dao = core_storage::source_dao::SourceDao::new(&mut conn);
-    let count = dao.import_from_json(&json)
+    let count = dao
+        .import_from_json(&json)
         .map_err(|e| format!("导入书源失败: {}", e))?;
     Ok(count as i32)
 }
@@ -161,7 +172,9 @@ pub fn get_source_for_download(db_path: String, source_id: String) -> Result<Str
 pub fn get_book_chapters(db_path: String, book_id: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::chapter_dao::ChapterDao::new(&conn);
-    let chapters = dao.get_by_book(&book_id).map_err(|e| format!("获取章节列表失败: {}", e))?;
+    let chapters = dao
+        .get_by_book(&book_id)
+        .map_err(|e| format!("获取章节列表失败: {}", e))?;
     serde_json::to_string(&chapters).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -183,7 +196,8 @@ pub fn save_chapter(db_path: String, chapter_json: String) -> Result<(), String>
     let chapter: core_storage::models::Chapter =
         serde_json::from_str(&chapter_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
     let dao = core_storage::chapter_dao::ChapterDao::new(&conn);
-    dao.upsert(&chapter).map_err(|e| format!("保存章节失败: {}", e))
+    dao.upsert(&chapter)
+        .map_err(|e| format!("保存章节失败: {}", e))
 }
 
 /// 删除章节
@@ -215,7 +229,9 @@ pub fn save_reading_progress(
 pub fn get_reading_progress(db_path: String, book_id: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::progress_dao::ProgressDao::new(&conn);
-    let progress = dao.get_by_book(&book_id).map_err(|e| format!("获取进度失败: {}", e))?;
+    let progress = dao
+        .get_by_book(&book_id)
+        .map_err(|e| format!("获取进度失败: {}", e))?;
     serde_json::to_string(&progress).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -227,7 +243,9 @@ pub fn get_reading_progress(db_path: String, book_id: String) -> Result<String, 
 pub fn get_bookmarks(db_path: String, book_id: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::progress_dao::ProgressDao::new(&conn);
-    let bookmarks = dao.get_bookmarks(&book_id).map_err(|e| format!("获取书签失败: {}", e))?;
+    let bookmarks = dao
+        .get_bookmarks(&book_id)
+        .map_err(|e| format!("获取书签失败: {}", e))?;
     serde_json::to_string(&bookmarks).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -260,10 +278,7 @@ pub fn delete_bookmark(db_path: String, bookmark_id: String) -> Result<(), Strin
 // ============================================================
 
 /// 搜索在线书籍（source_json 为 core_source::BookSource 的 JSON），返回搜索结果 JSON 数组
-pub async fn search_books_online(
-    source_json: String,
-    keyword: String,
-) -> Result<String, String> {
+pub async fn search_books_online(source_json: String, keyword: String) -> Result<String, String> {
     let source: core_source::types::BookSource =
         serde_json::from_str(&source_json).map_err(|e| format!("解析书源失败: {}", e))?;
     let parser = core_source::parser::BookSourceParser::new();
@@ -272,10 +287,7 @@ pub async fn search_books_online(
 }
 
 /// 获取在线书籍详情，返回 JSON 或 null
-pub async fn get_book_info_online(
-    source_json: String,
-    book_url: String,
-) -> Result<String, String> {
+pub async fn get_book_info_online(source_json: String, book_url: String) -> Result<String, String> {
     let source: core_source::types::BookSource =
         serde_json::from_str(&source_json).map_err(|e| format!("解析书源失败: {}", e))?;
     let parser = core_source::parser::BookSourceParser::new();
@@ -359,7 +371,9 @@ pub async fn get_chapter_content_with_source_from_db(
 pub fn get_download_tasks(db_path: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    let tasks = dao.get_all().map_err(|e| format!("获取下载任务失败: {}", e))?;
+    let tasks = dao
+        .get_all()
+        .map_err(|e| format!("获取下载任务失败: {}", e))?;
     serde_json::to_string(&tasks).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -367,7 +381,9 @@ pub fn get_download_tasks(db_path: String) -> Result<String, String> {
 pub fn get_download_task_by_book(db_path: String, book_id: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    let tasks = dao.get_by_book(&book_id).map_err(|e| format!("获取下载任务失败: {}", e))?;
+    let tasks = dao
+        .get_by_book(&book_id)
+        .map_err(|e| format!("获取下载任务失败: {}", e))?;
     serde_json::to_string(&tasks).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -377,7 +393,8 @@ pub fn create_download_task(db_path: String, task_json: String) -> Result<String
     let task: core_storage::models::DownloadTask =
         serde_json::from_str(&task_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    dao.upsert(&task).map_err(|e| format!("创建下载任务失败: {}", e))?;
+    dao.upsert(&task)
+        .map_err(|e| format!("创建下载任务失败: {}", e))?;
     serde_json::to_string(&task).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -428,19 +445,28 @@ pub fn update_download_progress(
 pub fn delete_download_task(db_path: String, task_id: String) -> Result<(), String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    dao.delete_with_files(&task_id).map_err(|e| format!("删除下载任务失败: {}", e))
+    let inferred_root = std::path::Path::new(&db_path)
+        .parent()
+        .map(|parent| parent.join("downloads"));
+    dao.delete_with_files_in_root(&task_id, inferred_root.as_deref())
+        .map_err(|e| format!("删除下载任务失败: {}", e))
 }
 
 /// 获取下载章节列表，返回 JSON 数组
 pub fn get_download_chapters(db_path: String, task_id: String) -> Result<String, String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    let chapters = dao.get_chapters_by_task(&task_id).map_err(|e| format!("获取下载章节失败: {}", e))?;
+    let chapters = dao
+        .get_chapters_by_task(&task_id)
+        .map_err(|e| format!("获取下载章节失败: {}", e))?;
     serde_json::to_string(&chapters).map_err(|e| format!("序列化失败: {}", e))
 }
 
 /// 批量创建下载章节记录
-pub fn batch_create_download_chapters(db_path: String, chapters_json: String) -> Result<(), String> {
+pub fn batch_create_download_chapters(
+    db_path: String,
+    chapters_json: String,
+) -> Result<(), String> {
     let conn = open_db(&db_path)?;
     let chapters: Vec<core_storage::models::DownloadChapter> =
         serde_json::from_str(&chapters_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
@@ -460,8 +486,14 @@ pub fn update_download_chapter_status(
 ) -> Result<(), String> {
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
-    dao.update_chapter_status(&chapter_id, status, file_path.as_deref(), file_size, error_message.as_deref())
-        .map_err(|e| format!("更新下载章节状态失败: {}", e))
+    dao.update_chapter_status(
+        &chapter_id,
+        status,
+        file_path.as_deref(),
+        file_size,
+        error_message.as_deref(),
+    )
+    .map_err(|e| format!("更新下载章节状态失败: {}", e))
 }
 
 /// 下载并保存单个章节到本地文件，更新数据库状态
@@ -473,6 +505,8 @@ pub async fn download_and_save_chapter(
     chapter_url: String,
     download_dir: String,
 ) -> Result<String, String> {
+    let download_root = resolve_download_root(&db_path, &download_dir)?;
+    core_storage::download_dao::set_download_root(&download_root.to_string_lossy());
     let source: core_source::types::BookSource =
         serde_json::from_str(&source_json).map_err(|e| format!("解析书源失败: {}", e))?;
     let parser = core_source::parser::BookSourceParser::new();
@@ -485,50 +519,114 @@ pub async fn download_and_save_chapter(
             let dao = core_storage::download_dao::DownloadDao::new(&conn);
             dao.update_chapter_status(&download_chapter_id, 3, None, 0, Some("章节内容为空"))
                 .map_err(|e| format!("更新章节状态失败: {}", e))?;
+            recompute_download_task_status(&dao, &task_id)
+                .map_err(|e| format!("更新任务状态失败: {}", e))?;
             return Err("章节内容为空".to_string());
         }
     };
 
-    let file_path = format!("{}/{}.txt", download_dir, download_chapter_id);
-    if let Some(parent) = std::path::Path::new(&file_path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    let file_name = safe_download_file_name(&download_chapter_id)?;
+    let file_path = download_root.join(file_name);
+    let parent = file_path
+        .parent()
+        .ok_or_else(|| "下载文件路径无效".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    let root_canonical = download_root
+        .canonicalize()
+        .map_err(|e| format!("下载目录无效: {}", e))?;
+    let parent_canonical = parent
+        .canonicalize()
+        .map_err(|e| format!("下载目录无效: {}", e))?;
+    if !parent_canonical.starts_with(&root_canonical) {
+        return Err("下载文件路径越界".to_string());
+    }
+    if std::fs::symlink_metadata(&file_path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("下载文件不能是符号链接".to_string());
     }
     std::fs::write(&file_path, &text).map_err(|e| format!("写入文件失败: {}", e))?;
-    let file_size = std::fs::metadata(&file_path).map(|m| m.len() as i64).unwrap_or(0);
+    let file_size = std::fs::metadata(&file_path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+    let file_path = file_path.to_string_lossy().to_string();
 
     let conn = open_db(&db_path)?;
     let dao = core_storage::download_dao::DownloadDao::new(&conn);
     dao.update_chapter_status(&download_chapter_id, 2, Some(&file_path), file_size, None)
         .map_err(|e| format!("更新章节状态失败: {}", e))?;
+    recompute_download_task_status(&dao, &task_id)
+        .map_err(|e| format!("更新任务状态失败: {}", e))?;
 
-    let chapters = dao.get_chapters_by_task(&task_id)
-        .map_err(|e| format!("获取章节列表失败: {}", e))?;
+    Ok(file_path)
+}
+
+fn recompute_download_task_status(
+    dao: &core_storage::download_dao::DownloadDao<'_>,
+    task_id: &str,
+) -> rusqlite::Result<()> {
+    let chapters = dao.get_chapters_by_task(task_id)?;
     let completed_count = chapters.iter().filter(|c| c.status == 2).count() as i32;
     let failed_count = chapters.iter().filter(|c| c.status == 3).count() as i32;
     let total_count = chapters.len() as i32;
     let total_size: i64 = chapters.iter().map(|c| c.file_size).sum();
 
-    dao.update_progress(&task_id, completed_count, total_size)
-        .map_err(|e| format!("更新下载进度失败: {}", e))?;
+    dao.update_progress(task_id, completed_count, total_size)?;
 
     if completed_count + failed_count >= total_count {
         if failed_count > 0 {
-            dao.update_status(&task_id, 4,
-                Some(&format!("部分章节下载失败 (成功: {}, 失败: {})", completed_count, failed_count)))
-                .map_err(|e| format!("更新任务状态失败: {}", e))?;
+            dao.update_status(
+                task_id,
+                4,
+                Some(&format!(
+                    "部分章节下载失败 (成功: {}, 失败: {})",
+                    completed_count, failed_count
+                )),
+            )?;
         } else {
-            dao.update_status(&task_id, 3, None)
-                .map_err(|e| format!("更新任务状态失败: {}", e))?;
+            dao.update_status(task_id, 3, None)?;
         }
     }
+    Ok(())
+}
 
-    Ok(file_path)
+fn resolve_download_root(db_path: &str, download_dir: &str) -> Result<std::path::PathBuf, String> {
+    let expected = std::path::Path::new(db_path)
+        .parent()
+        .ok_or_else(|| "数据库路径无效".to_string())?
+        .join("downloads");
+    std::fs::create_dir_all(&expected).map_err(|e| format!("创建下载目录失败: {}", e))?;
+    let expected_canonical = expected
+        .canonicalize()
+        .map_err(|e| format!("下载目录无效: {}", e))?;
+    let requested = std::path::Path::new(download_dir);
+    let requested_canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("下载目录无效: {}", e))?;
+    if requested_canonical != expected_canonical {
+        return Err("下载目录必须位于数据库目录下的 downloads".to_string());
+    }
+    Ok(expected_canonical)
+}
+
+fn safe_download_file_name(download_chapter_id: &str) -> Result<String, String> {
+    let id = download_chapter_id.trim();
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains(std::path::MAIN_SEPARATOR)
+    {
+        return Err("下载章节 ID 不能作为安全文件名".to_string());
+    }
+    Ok(format!("{id}.txt"))
 }
 
 /// 验证书源规则（source_json 为 core_source::types::BookSource 的 JSON），返回 JSON 数组
 pub fn validate_source_rules(source_json: String) -> Result<String, String> {
-    core_source::validate_source_json(&source_json)
-        .map_err(|e| format!("验证书源规则失败: {}", e))
+    core_source::validate_source_json(&source_json).map_err(|e| format!("验证书源规则失败: {}", e))
 }
 
 /// 验证数据库中的书源规则，返回 JSON 数组 [{field, severity, message}]
@@ -549,7 +647,8 @@ pub fn validate_source_from_db(db_path: String, source_id: String) -> Result<Str
 pub fn export_all_sources(db_path: String) -> Result<String, String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
-    dao.export_legado_json().map_err(|e| format!("导出失败: {}", e))
+    dao.export_legado_json()
+        .map_err(|e| format!("导出失败: {}", e))
 }
 
 // ============================================================
@@ -569,8 +668,28 @@ pub fn get_explore_entries(db_path: String, source_id: String) -> Result<String,
     serde_json::to_string(&entries).map_err(|e| format!("序列化失败: {}", e))
 }
 
+fn block_on_explore<F, R>(f: F) -> R
+where
+    F: FnOnce(&tokio::runtime::Runtime) -> R,
+{
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let rt = RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("explore runtime")
+    });
+    f(rt)
+}
+
 /// 执行发现页请求，获取书籍列表
-pub fn explore(db_path: String, source_id: String, explore_url: String, page: i32) -> Result<String, String> {
+pub fn explore(
+    db_path: String,
+    source_id: String,
+    explore_url: String,
+    page: i32,
+) -> Result<String, String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::source_dao::SourceDao::new(&mut conn);
     let source = dao
@@ -579,11 +698,8 @@ pub fn explore(db_path: String, source_id: String, explore_url: String, page: i3
         .ok_or_else(|| format!("书源不存在: {}", source_id))?;
     let core_source = storage_to_source_book_source(&source)?;
     let parser = core_source::parser::BookSourceParser::new();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("创建运行时失败: {}", e))?;
-    let results = rt.block_on(parser.explore(&core_source, &explore_url, page));
+    let results =
+        block_on_explore(|rt| rt.block_on(parser.explore(&core_source, &explore_url, page)));
     serde_json::to_string(&results).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -595,7 +711,9 @@ pub fn explore(db_path: String, source_id: String, explore_url: String, page: i3
 pub fn get_replace_rules(db_path: String) -> Result<String, String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::replace_rule_dao::ReplaceRuleDao::new(&mut conn);
-    let rules = dao.get_all().map_err(|e| format!("获取替换规则列表失败: {}", e))?;
+    let rules = dao
+        .get_all()
+        .map_err(|e| format!("获取替换规则列表失败: {}", e))?;
     serde_json::to_string(&rules).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -605,14 +723,16 @@ pub fn save_replace_rule(db_path: String, rule_json: String) -> Result<(), Strin
     let rule: core_storage::models::ReplaceRule =
         serde_json::from_str(&rule_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
     let dao = core_storage::replace_rule_dao::ReplaceRuleDao::new(&mut conn);
-    dao.upsert(&rule).map_err(|e| format!("保存替换规则失败: {}", e))
+    dao.upsert(&rule)
+        .map_err(|e| format!("保存替换规则失败: {}", e))
 }
 
 /// 删除替换规则
 pub fn delete_replace_rule(db_path: String, id: String) -> Result<(), String> {
     let mut conn = open_db(&db_path)?;
     let dao = core_storage::replace_rule_dao::ReplaceRuleDao::new(&mut conn);
-    dao.delete(&id).map_err(|e| format!("删除替换规则失败: {}", e))
+    dao.delete(&id)
+        .map_err(|e| format!("删除替换规则失败: {}", e))
 }
 
 /// 启用 / 禁用替换规则
@@ -643,7 +763,9 @@ fn storage_to_source_book_source(
     let rule_book_info = s
         .rule_book_info
         .as_deref()
-        .map(|r| serde_json::from_str(r).map_err(|e| format!("解析 rule_book_info JSON 失败: {}", e)))
+        .map(|r| {
+            serde_json::from_str(r).map_err(|e| format!("解析 rule_book_info JSON 失败: {}", e))
+        })
         .transpose()?;
 
     let rule_toc = s

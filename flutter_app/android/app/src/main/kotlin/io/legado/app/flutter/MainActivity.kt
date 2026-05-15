@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Base64
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -34,8 +35,13 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import java.io.File
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -46,6 +52,20 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL_NAME = "legado/notifications"
         const val WEBVIEW_CHANNEL_NAME = "legado/webview_executor"
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
+        const val MAX_BRIDGE_BODY_BYTES = 10 * 1024 * 1024L
+        const val MAX_ZIP_DOWNLOAD_BYTES = 50 * 1024 * 1024L
+        const val MAX_ZIP_ENTRY_BYTES = 10 * 1024 * 1024L
+        const val MAX_ZIP_TOTAL_BYTES = 50 * 1024 * 1024L
+        const val MAX_ZIP_ENTRIES = 1024
+
+        private fun isAllowedWebViewUrl(url: String): Boolean {
+            return try {
+                val uri = Uri.parse(url)
+                uri.scheme == "https" || uri.scheme == "http"
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     private var pendingNotificationResult: MethodChannel.Result? = null
@@ -78,6 +98,10 @@ class MainActivity : FlutterActivity() {
             result.error("INVALID_ARGUMENT", "url is required", null)
             return
         }
+        if (!isAllowedWebViewUrl(url)) {
+            result.error("INVALID_URL", "Only http(s) WebView URLs are allowed", null)
+            return
+        }
         val webJs = args["webJs"] as? String
         val sourceRegex = args["sourceRegex"] as? String
         val headers = (args["headers"] as? Map<*, *>)
@@ -94,7 +118,13 @@ class MainActivity : FlutterActivity() {
         runOnUiThread {
             val webView = WebView(this)
             var completed = false
-            val matchedResources = mutableListOf<String>()
+            val matchedResources = CopyOnWriteArrayList<String>()
+            val bridgeRoot = File(cacheDir, "legado_webview").apply { mkdirs() }
+            val compiledRegex = try {
+                sourceRegex?.takeIf { it.isNotBlank() && it.length <= 1024 }?.let { Regex(it) }
+            } catch (_: Exception) {
+                null
+            }
             val finish = { payload: Map<String, Any?> ->
                 if (!completed) {
                     completed = true
@@ -106,25 +136,43 @@ class MainActivity : FlutterActivity() {
                     result.success(payload)
                 }
             }
+            fun evaluateAndFinish(payloadExtra: Map<String, Any?> = emptyMap()) {
+                if (completed) return
+                val script = wrapWebJs(webJs)
+                webView.evaluateJavascript(script, ValueCallback { value ->
+                    val payload = mutableMapOf<String, Any?>(
+                        "content" to decodeJsString(value),
+                        "resourceUrl" to matchedResources.firstOrNull(),
+                        "sourceRegexMatched" to matchedResources.isNotEmpty(),
+                    )
+                    payload.putAll(payloadExtra)
+                    finish(payload)
+                })
+            }
 
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
+            webView.settings.allowFileAccess = false
+            webView.settings.allowContentAccess = false
             if (!userAgent.isNullOrBlank()) {
                 webView.settings.userAgentString = userAgent
             }
-            webView.addJavascriptInterface(LegadoJsBridge(headers, cacheDir), "legadoNative")
+            webView.addJavascriptInterface(LegadoJsBridge(headers, bridgeRoot), "legadoNative")
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val next = request?.url?.toString() ?: return true
+                    return !isAllowedWebViewUrl(next)
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
                 ): WebResourceResponse? {
                     val requestUrl = request?.url?.toString()
-                    if (!sourceRegex.isNullOrBlank() && requestUrl != null) {
-                        try {
-                            if (Regex(sourceRegex).containsMatchIn(requestUrl)) {
-                                matchedResources.add(requestUrl)
-                            }
-                        } catch (_: Exception) {
+                    if (compiledRegex != null && requestUrl != null && matchedResources.isEmpty()) {
+                        if (compiledRegex.containsMatchIn(requestUrl)) {
+                            matchedResources.add(requestUrl)
+                            webView.post { evaluateAndFinish() }
                         }
                     }
                     return super.shouldInterceptRequest(view, request)
@@ -132,28 +180,27 @@ class MainActivity : FlutterActivity() {
 
                 override fun onPageFinished(view: WebView?, finishedUrl: String?) {
                     if (completed) return
-                    val script = wrapWebJs(webJs)
-                    webView.evaluateJavascript(script, ValueCallback { value ->
-                        finish(
-                            mapOf(
-                                "content" to decodeJsString(value),
-                                "resourceUrl" to matchedResources.firstOrNull(),
-                                "sourceRegexMatched" to matchedResources.isNotEmpty(),
-                            )
-                        )
-                    })
+                    if (compiledRegex != null && matchedResources.isEmpty()) {
+                        webView.postDelayed({ evaluateAndFinish(mapOf("idle" to true)) }, 1500L)
+                    } else {
+                        evaluateAndFinish()
+                    }
                 }
             }
 
             webView.postDelayed({
-                finish(
-                    mapOf(
-                        "content" to "",
-                        "resourceUrl" to matchedResources.firstOrNull(),
-                        "sourceRegexMatched" to matchedResources.isNotEmpty(),
-                        "timeout" to true,
+                if (matchedResources.isNotEmpty()) {
+                    evaluateAndFinish(mapOf("timeout" to true))
+                } else {
+                    finish(
+                        mapOf(
+                            "content" to "",
+                            "resourceUrl" to null,
+                            "sourceRegexMatched" to false,
+                            "timeout" to true,
+                        )
                     )
-                )
+                }
             }, timeoutMs)
             webView.loadUrl(url, headers)
         }
@@ -232,10 +279,12 @@ class MainActivity : FlutterActivity() {
         @JavascriptInterface
         fun http(method: String, url: String, body: String, headersJson: String): String {
             return try {
+                if (!isAllowedWebViewUrl(url)) return ""
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.requestMethod = method.uppercase()
                 conn.connectTimeout = 15000
                 conn.readTimeout = 30000
+                if (conn.contentLengthLong > MAX_BRIDGE_BODY_BYTES) return ""
                 for ((key, value) in defaultHeaders) {
                     conn.setRequestProperty(key, value)
                 }
@@ -249,7 +298,7 @@ class MainActivity : FlutterActivity() {
                     conn.outputStream.use { it.write(bytes) }
                 }
                 val stream = if (conn.responseCode >= 400) conn.errorStream else conn.inputStream
-                stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                stream?.use { String(readLimitedBytes(it, MAX_BRIDGE_BODY_BYTES), Charsets.UTF_8) } ?: ""
             } catch (e: Exception) {
                 ""
             }
@@ -456,7 +505,9 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) { str }
 
         @JavascriptInterface
-        fun getFile(path: String): String = File(fileRoot, path).absolutePath
+        fun getFile(path: String): String = try {
+            resolvePath(path).absolutePath
+        } catch (_: Exception) { "" }
 
         @JavascriptInterface
         fun readFile(path: String): String {
@@ -464,6 +515,7 @@ class MainActivity : FlutterActivity() {
                 val file = resolvePath(path)
                 if (!file.exists()) "[]"
                 else {
+                    if (file.length() > MAX_BRIDGE_BODY_BYTES) return "[]"
                     val bytes = file.readBytes()
                     bytes.joinToString(prefix = "[", postfix = "]") { (it.toInt() and 0xff).toString() }
                 }
@@ -475,8 +527,12 @@ class MainActivity : FlutterActivity() {
             return try {
                 val file = resolvePath(path)
                 if (!file.exists()) ""
-                else if (charsetName.isBlank()) file.readText()
-                else file.readText(Charset.forName(charsetName))
+                else {
+                    if (file.length() > MAX_BRIDGE_BODY_BYTES) return ""
+                    val bytes = file.readBytes()
+                    if (charsetName.isBlank()) String(bytes, Charsets.UTF_8)
+                    else String(bytes, Charset.forName(charsetName))
+                }
             } catch (_: Exception) { "" }
         }
 
@@ -489,13 +545,15 @@ class MainActivity : FlutterActivity() {
 
         @JavascriptInterface
         fun downloadFile(url: String, path: String): String = try {
+            if (!isAllowedWebViewUrl(url)) throw IllegalArgumentException("invalid url")
             val file = resolvePath(path)
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 30000
+            if (conn.contentLengthLong > MAX_BRIDGE_BODY_BYTES) throw IllegalStateException("response too large")
             conn.inputStream.use { input ->
                 FileOutputStream(file).use { output ->
-                    input.copyTo(output)
+                    copyLimited(input, output, MAX_BRIDGE_BODY_BYTES)
                 }
             }
             file.absolutePath
@@ -506,19 +564,29 @@ class MainActivity : FlutterActivity() {
             return try {
                 val zipFile = resolvePath(zipPath)
                 if (!zipFile.exists()) ""
+                else if (zipFile.length() > MAX_ZIP_DOWNLOAD_BYTES) ""
                 else {
-                    val dest = File(fileRoot, destDir)
+                    val dest = resolvePath(destDir)
                     dest.mkdirs()
+                    val destCanonical = dest.canonicalFile
+                    var total = 0L
+                    var count = 0
                     ZipInputStream(FileInputStream(zipFile)).use { zis ->
                         var entry = zis.nextEntry
                         while (entry != null) {
-                            val entryFile = File(dest, entry.name)
-                            if (entry.isDirectory) {
-                                entryFile.mkdirs()
-                            } else {
-                                entryFile.parentFile?.mkdirs()
-                                FileOutputStream(entryFile).use { fos ->
-                                    zis.copyTo(fos)
+                            count++
+                            if (count > MAX_ZIP_ENTRIES) break
+                            val entryFile = safeZipEntryFile(destCanonical, entry)
+                            if (entryFile != null) {
+                                if (entry.isDirectory) {
+                                    entryFile.mkdirs()
+                                } else {
+                                    entryFile.parentFile?.mkdirs()
+                                    FileOutputStream(entryFile).use { fos ->
+                                        val written = copyLimited(zis, fos, MAX_ZIP_ENTRY_BYTES)
+                                        total += written
+                                        if (total > MAX_ZIP_TOTAL_BYTES) throw IllegalStateException("zip too large")
+                                    }
                                 }
                             }
                             zis.closeEntry()
@@ -533,12 +601,16 @@ class MainActivity : FlutterActivity() {
         @JavascriptInterface
         fun getTxtInFolder(dirPath: String): String {
             return try {
-                val dir = File(fileRoot, dirPath)
+                val dir = resolvePath(dirPath)
                 if (!dir.isDirectory) ""
                 else {
                     val sb = StringBuilder()
                     dir.listFiles()?.filter { it.extension.lowercase(Locale.ROOT) == "txt" }?.sortedBy { it.name }?.forEach { file ->
-                        sb.append(file.readText())
+                        val root = fileRoot.canonicalFile
+                        val canonical = file.canonicalFile
+                        if (canonical.path.startsWith(root.path + File.separator) && file.length() <= MAX_BRIDGE_BODY_BYTES) {
+                            sb.append(file.readText())
+                        }
                     }
                     sb.toString()
                 }
@@ -550,13 +622,15 @@ class MainActivity : FlutterActivity() {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 30000
+            if (!isAllowedWebViewUrl(url) || conn.contentLengthLong > MAX_ZIP_DOWNLOAD_BYTES) throw IllegalArgumentException("invalid zip url")
             var found: String? = null
             conn.inputStream.use { input ->
-                ZipInputStream(input).use { zis ->
+                val zipBytes = readLimitedBytes(input, MAX_ZIP_DOWNLOAD_BYTES)
+                ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
                         if (entry.name == path) {
-                            found = zis.bufferedReader(Charsets.UTF_8).readText()
+                            found = String(readLimitedBytes(zis, MAX_ZIP_ENTRY_BYTES), Charsets.UTF_8)
                             break
                         }
                         zis.closeEntry()
@@ -572,13 +646,15 @@ class MainActivity : FlutterActivity() {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 30000
+            if (!isAllowedWebViewUrl(url) || conn.contentLengthLong > MAX_ZIP_DOWNLOAD_BYTES) throw IllegalArgumentException("invalid zip url")
             var found: String? = null
             conn.inputStream.use { input ->
-                ZipInputStream(input).use { zis ->
+                val zipBytes = readLimitedBytes(input, MAX_ZIP_DOWNLOAD_BYTES)
+                ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
                         if (entry.name == path) {
-                            val bytes = zis.readBytes()
+                            val bytes = readLimitedBytes(zis, MAX_ZIP_ENTRY_BYTES)
                             found = bytes.joinToString(prefix = "[", postfix = "]") { (it.toInt() and 0xff).toString() }
                             break
                         }
@@ -605,10 +681,12 @@ class MainActivity : FlutterActivity() {
             return try {
                 val bytes = when {
                     input.startsWith("http://") || input.startsWith("https://") -> {
+                        if (!isAllowedWebViewUrl(input)) return "null"
                         val conn = URL(input).openConnection() as HttpURLConnection
                         conn.connectTimeout = 15000
                         conn.readTimeout = 30000
-                        conn.inputStream.use { it.readBytes() }
+                        if (conn.contentLengthLong > MAX_BRIDGE_BODY_BYTES) return "null"
+                        conn.inputStream.use { readLimitedBytes(it, MAX_BRIDGE_BODY_BYTES) }
                     }
                     input.length > 100 && !input.contains('/') && !input.contains('\\') -> {
                         Base64.decode(input, Base64.DEFAULT)
@@ -812,9 +890,42 @@ class MainActivity : FlutterActivity() {
         }
 
         private fun resolvePath(path: String): File {
-            val f = File(path)
-            if (f.isAbsolute) return f
-            return File(fileRoot, path)
+            if (path.isBlank()) throw IllegalArgumentException("empty path")
+            val root = fileRoot.canonicalFile
+            val candidate = File(root, path).canonicalFile
+            if (!candidate.path.startsWith(root.path + File.separator) && candidate != root) {
+                throw SecurityException("path escapes sandbox")
+            }
+            return candidate
+        }
+
+        private fun safeZipEntryFile(destCanonical: File, entry: ZipEntry): File? {
+            val name = entry.name
+            if (name.isBlank() || name.startsWith("/") || name.startsWith("\\")) return null
+            val segments = name.replace('\\', '/').split('/')
+            if (segments.any { it.isBlank() || it == "." || it == ".." }) return null
+            val candidate = File(destCanonical, name).canonicalFile
+            val prefix = destCanonical.path + File.separator
+            return if (candidate.path.startsWith(prefix) || candidate == destCanonical) candidate else null
+        }
+
+        private fun readLimitedBytes(input: InputStream, maxBytes: Long): ByteArray {
+            val out = ByteArrayOutputStream()
+            copyLimited(input, out, maxBytes)
+            return out.toByteArray()
+        }
+
+        private fun copyLimited(input: InputStream, output: OutputStream, maxBytes: Long): Long {
+            val buffer = ByteArray(8 * 1024)
+            var total = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > maxBytes) throw IllegalStateException("stream too large")
+                output.write(buffer, 0, read)
+            }
+            return total
         }
 
         private fun hexToBytes(hex: String): ByteArray {

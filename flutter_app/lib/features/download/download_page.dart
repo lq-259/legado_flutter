@@ -121,7 +121,12 @@ class DownloadPage extends ConsumerWidget {
                 TextButton.icon(
                   icon: const Icon(Icons.delete_outline, size: 18),
                   label: const Text('删除'),
-                  onPressed: () => _deleteTask(context, ref, task['id'] as String),
+                  onPressed: () {
+                    final taskId = task['id'] is String ? task['id'] as String : '';
+                    if (taskId.isNotEmpty) {
+                      _deleteTask(context, ref, taskId);
+                    }
+                  },
                 ),
               ],
             ),

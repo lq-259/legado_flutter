@@ -4,6 +4,8 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::error::ApiError;
@@ -55,13 +57,21 @@ async fn search(
             .collect()
     };
 
+    let semaphore = Arc::new(Semaphore::new(16));
     let mut join_set = JoinSet::new();
     for sid in &source_ids {
         let sid = sid.clone();
         let db_path = state.db_path.clone();
         let keyword = req.keyword.clone();
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| ApiError::Internal("信号量获取失败".into()))?;
         join_set.spawn(async move {
-            search_single_source(&db_path, &sid, &keyword).await
+            let result = search_single_source(&db_path, &sid, &keyword).await;
+            drop(permit);
+            result
         });
     }
 

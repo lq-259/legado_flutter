@@ -1,5 +1,5 @@
-use rusqlite::{Connection, Result as SqlResult, params};
 use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
 
 pub struct CacheDao<'a> {
     conn: &'a Connection,
@@ -11,9 +11,9 @@ impl<'a> CacheDao<'a> {
     }
 
     pub fn get(&self, key: &str) -> SqlResult<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT value FROM legacy_cache WHERE key = ?"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM legacy_cache WHERE key = ?")?;
         let mut rows = stmt.query(params![key])?;
         Ok(rows.next()?.map(|row| row.get(0).unwrap_or_default()))
     }
@@ -29,7 +29,8 @@ impl<'a> CacheDao<'a> {
     }
 
     pub fn delete(&self, key: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM legacy_cache WHERE key = ?", params![key])?;
+        self.conn
+            .execute("DELETE FROM legacy_cache WHERE key = ?", params![key])?;
         Ok(())
     }
 }

@@ -1,8 +1,7 @@
 use crate::error::ApiError;
 
 pub fn open_db(db_path: &str) -> Result<rusqlite::Connection, ApiError> {
-    core_storage::database::get_connection(db_path)
-        .map_err(|e| ApiError::Database(e.to_string()))
+    core_storage::database::get_connection(db_path).map_err(|e| ApiError::Database(e.to_string()))
 }
 
 pub fn storage_to_core_source(

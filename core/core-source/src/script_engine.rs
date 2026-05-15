@@ -13,12 +13,12 @@
 //! - 脚本源码长度上限: 100,000 字符
 //! - 输出总字符数上限: 500,000（递归计算 String/Array/Map）
 
-use rhai::{Engine, Scope, Dynamic, AST};
+use rhai::{Dynamic, Engine, Scope, AST};
 use serde_json::Value as JsonValue;
-use tracing::{debug, error};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::{debug, error};
 
 const MAX_SCRIPT_LENGTH: usize = 100_000;
 const MAX_OUTPUT_STRING_LENGTH: usize = 500_000;
@@ -143,8 +143,7 @@ impl ScriptEngine {
 
         // 注册 JSON 处理函数
         engine.register_fn("parse_json", |s: &str| {
-            serde_json::from_str::<JsonValue>(s)
-                .unwrap_or(JsonValue::Null)
+            serde_json::from_str::<JsonValue>(s).unwrap_or(JsonValue::Null)
         });
 
         engine.register_fn("to_json_string", |val: Dynamic| {
@@ -184,17 +183,31 @@ impl ScriptEngine {
     fn check_output_size(result: &ScriptResult) -> Result<(), String> {
         let total = result.total_chars();
         if total > MAX_OUTPUT_STRING_LENGTH {
-            return Err(format!("脚本输出过长: {} > {} 字符", total, MAX_OUTPUT_STRING_LENGTH));
+            return Err(format!(
+                "脚本输出过长: {} > {} 字符",
+                total, MAX_OUTPUT_STRING_LENGTH
+            ));
         }
         Ok(())
     }
 
     /// 执行脚本并返回结果
-    pub fn eval(&self, script: &str, context: Option<&ScriptContext>) -> Result<ScriptResult, String> {
+    pub fn eval(
+        &self,
+        script: &str,
+        context: Option<&ScriptContext>,
+    ) -> Result<ScriptResult, String> {
         if script.len() > MAX_SCRIPT_LENGTH {
-            return Err(format!("脚本过长: {} > {} 字符", script.len(), MAX_SCRIPT_LENGTH));
+            return Err(format!(
+                "脚本过长: {} > {} 字符",
+                script.len(),
+                MAX_SCRIPT_LENGTH
+            ));
         }
-        debug!("执行脚本: {}...", script.chars().take(50).collect::<String>());
+        debug!(
+            "执行脚本: {}...",
+            script.chars().take(50).collect::<String>()
+        );
 
         let mut scope = Scope::new();
 
@@ -239,20 +252,34 @@ impl ScriptEngine {
     /// 编译并缓存脚本（用于多次执行）
     pub fn compile(&self, script: &str) -> Result<AST, String> {
         if script.len() > MAX_SCRIPT_LENGTH {
-            return Err(format!("脚本过长: {} > {} 字符", script.len(), MAX_SCRIPT_LENGTH));
+            return Err(format!(
+                "脚本过长: {} > {} 字符",
+                script.len(),
+                MAX_SCRIPT_LENGTH
+            ));
         }
-        self.engine.compile(script)
+        self.engine
+            .compile(script)
             .map_err(|e| format!("脚本编译失败: {}", e))
     }
 
     /// 执行预编译的脚本（与 eval 共享同一安全边界）
-    pub fn eval_ast(&self, ast: &AST, context: Option<&ScriptContext>) -> Result<ScriptResult, String> {
+    pub fn eval_ast(
+        &self,
+        ast: &AST,
+        context: Option<&ScriptContext>,
+    ) -> Result<ScriptResult, String> {
         let mut scope = Scope::new();
 
         if let Some(ctx) = context {
             scope.push("result", ctx.result.clone());
             scope.push("content", ctx.content.clone());
             scope.push("url", ctx.url.clone());
+            scope.push("headers", ctx.headers.clone());
+
+            if let Some(source_name) = &ctx.source_name {
+                scope.push("source_name", source_name.clone());
+            }
         }
 
         self.timed_out.store(false, Ordering::SeqCst);
@@ -301,10 +328,7 @@ impl ScriptEngine {
         }
 
         if let Some(arr) = val.clone().try_cast::<rhai::Array>() {
-            let results: Vec<ScriptResult> = arr
-                .into_iter()
-                .map(Self::dynamic_to_result)
-                .collect();
+            let results: Vec<ScriptResult> = arr.into_iter().map(Self::dynamic_to_result).collect();
             return ScriptResult::Array(results);
         }
 
@@ -434,7 +458,10 @@ mod tests {
         "#;
         let ctx = ScriptContext::new("", "<html><title>Test Page</title></html>", "");
         let result = engine.eval(script, Some(&ctx)).unwrap();
-        assert_eq!(result.as_string(), Some("<title>Test Page</title>".to_string()));
+        assert_eq!(
+            result.as_string(),
+            Some("<title>Test Page</title>".to_string())
+        );
     }
 
     #[test]
@@ -486,7 +513,11 @@ mod tests {
         let script = "let s = \"\"; for i in 0..8000 { s = s + \"x\"; } s";
         let result = engine.eval(script, None);
         // under 100k operations, not max_ops — should succeed within 5s
-        assert!(result.is_ok(), "string concat should complete, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "string concat should complete, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -508,7 +539,8 @@ mod tests {
         let total = ScriptResult::Array(vec![
             ScriptResult::String("a".repeat(200_000)),
             ScriptResult::String("b".repeat(300_000)),
-        ]).total_chars();
+        ])
+        .total_chars();
         assert_eq!(total, 500_000);
     }
 

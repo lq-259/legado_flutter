@@ -13,23 +13,24 @@ const DB_VERSION: i32 = 8;
 /// 创建所有必要的表，如果数据库已存在则检查是否需要迁移
 pub fn init_database(db_path: &str) -> SqlResult<Connection> {
     info!("初始化数据库: {}", db_path);
-    
+
     // 确保目录存在
     if let Some(parent) = std::path::Path::new(db_path).parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CANTOPEN), 
-                    Some(e.to_string())
-                ))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CANTOPEN),
+                    Some(e.to_string()),
+                )
+            })?;
         }
     }
-    
+
     let conn = Connection::open(db_path)?;
-    
+
     // 启用外键约束
     conn.execute("PRAGMA foreign_keys = ON", [])?;
-    
+
     // 检查数据库版本（使用 PRAGMA user_version）
     let version = get_db_version(&conn)?;
     debug!("当前数据库版本: {}", version);
@@ -41,9 +42,12 @@ pub fn init_database(db_path: &str) -> SqlResult<Connection> {
     } else if version < DB_VERSION {
         migrate_database(&conn, version, DB_VERSION)?;
     } else if version > DB_VERSION {
-        warn!("数据库版本 {} 高于当前版本 {}，跳过迁移", version, DB_VERSION);
+        warn!(
+            "数据库版本 {} 高于当前版本 {}，跳过迁移",
+            version, DB_VERSION
+        );
     }
-    
+
     info!("数据库初始化完成");
     Ok(conn)
 }
@@ -51,7 +55,7 @@ pub fn init_database(db_path: &str) -> SqlResult<Connection> {
 /// 创建所有表
 pub fn create_tables(conn: &Connection) -> SqlResult<()> {
     info!("创建数据库表...");
-    
+
     // 应用设置表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS app_settings (
@@ -60,7 +64,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 书源表 (对应原 Legado 的 BookSource 实体)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS book_sources (
@@ -95,7 +99,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 书籍表 (对应原 Legado 的 Book 实体)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS books (
@@ -125,7 +129,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 章节表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS chapters (
@@ -145,7 +149,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 阅读进度表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS book_progress (
@@ -159,7 +163,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 书签表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS bookmarks (
@@ -173,7 +177,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 替换规则表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS replace_rules (
@@ -189,7 +193,7 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
-    
+
     // 下载任务表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS download_tasks (
@@ -239,19 +243,45 @@ pub fn create_tables(conn: &Connection) -> SqlResult<()> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sync_log (
+            id TEXT PRIMARY KEY,
+            sync_type TEXT NOT NULL,
+            sync_data TEXT,
+            status INTEGER DEFAULT 0,
+            error_message TEXT,
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
     // 创建索引
     create_indices(conn)?;
-    
+
     info!("数据库表创建完成");
     Ok(())
 }
 
 /// 创建索引
 fn create_indices(conn: &Connection) -> SqlResult<()> {
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_books_source_id ON books(source_id)", [])?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)", [])?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_chapters_index ON chapters(book_id, index_num)", [])?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_book_id ON bookmarks(book_id)", [])?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_books_source_id ON books(source_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chapters_index ON chapters(book_id, index_num)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bookmarks_book_id ON bookmarks(book_id)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -400,6 +430,7 @@ fn migrate_v5(conn: &Connection) -> SqlResult<()> {
 
 /// 版本 6 迁移：添加探索规则相关列
 fn migrate_v6(conn: &Connection) -> SqlResult<()> {
+    create_tables(conn)?;
     for (col, col_type) in [
         ("rule_explore", "TEXT"),
         ("explore_url", "TEXT"),
@@ -408,12 +439,18 @@ fn migrate_v6(conn: &Connection) -> SqlResult<()> {
         ("book_source_comment", "TEXT"),
     ] {
         let has_col: bool = conn.query_row(
-            &format!("SELECT COUNT(*) > 0 FROM pragma_table_info('book_sources') WHERE name = '{}'", col),
+            &format!(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('book_sources') WHERE name = '{}'",
+                col
+            ),
             [],
             |row| row.get(0),
         )?;
         if !has_col {
-            conn.execute(&format!("ALTER TABLE book_sources ADD COLUMN {} {}", col, col_type), [])?;
+            conn.execute(
+                &format!("ALTER TABLE book_sources ADD COLUMN {} {}", col, col_type),
+                [],
+            )?;
         }
     }
     Ok(())
@@ -435,6 +472,7 @@ fn migrate_v7(conn: &Connection) -> SqlResult<()> {
 
 /// 版本 8 迁移：为 book_sources 表添加 book_url_pattern 列
 fn migrate_v8(conn: &Connection) -> SqlResult<()> {
+    create_tables(conn)?;
     let has_book_url_pattern: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM pragma_table_info('book_sources') WHERE name = 'book_url_pattern'",
         [],
@@ -443,7 +481,10 @@ fn migrate_v8(conn: &Connection) -> SqlResult<()> {
     if has_book_url_pattern {
         return Ok(());
     }
-    conn.execute("ALTER TABLE book_sources ADD COLUMN book_url_pattern TEXT", [])?;
+    conn.execute(
+        "ALTER TABLE book_sources ADD COLUMN book_url_pattern TEXT",
+        [],
+    )?;
     Ok(())
 }
 
@@ -464,38 +505,50 @@ pub fn execute_sql_file(conn: &Connection, sql: &str) -> SqlResult<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[test]
     fn test_database_init() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_string_lossy().to_string();
-        
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_string_lossy()
+            .to_string();
+
         let conn = init_database(&db_path).unwrap();
-        
+
         // 验证表是否存在（含 sync_log）
-        let count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-            [],
-            |row| row.get(0)
-        ).unwrap();
-        
+        let count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
         assert!(count >= 8); // 至少 8 个表（含 sync_log）
 
         let version = get_db_version(&conn).unwrap();
         assert_eq!(version, DB_VERSION);
 
-        let has_book_url: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('books') WHERE name = 'book_url'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let has_book_url: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('books') WHERE name = 'book_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(has_book_url, "fresh database should include book_url");
     }
 
     #[test]
     fn test_migration_from_v3_adds_book_url() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_migrate_v3.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_migrate_v3.db")
+            .to_string_lossy()
+            .to_string();
 
         let conn = Connection::open(&db_path).unwrap();
         conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
@@ -523,16 +576,19 @@ mod tests {
                 updated_at INTEGER NOT NULL
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.pragma_update(None, "user_version", 3_i32).unwrap();
         drop(conn);
 
         let migrated = init_database(&db_path).unwrap();
-        let has_book_url: bool = migrated.query_row(
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('books') WHERE name = 'book_url'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let has_book_url: bool = migrated
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('books') WHERE name = 'book_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(has_book_url, "v3 migration should add book_url");
 
         let version = get_db_version(&migrated).unwrap();
@@ -542,33 +598,33 @@ mod tests {
     #[test]
     fn test_migration_from_v1_to_v2() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_migrate.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_migrate.db")
+            .to_string_lossy()
+            .to_string();
 
         // 创建 v1 数据库
         let conn = Connection::open(&db_path).unwrap();
         conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        // Simulate a v1-era schema by creating tables and then dropping sync_log
+        // which was added in v2 migration.
         create_tables(&conn).unwrap();
+        conn.execute("DROP TABLE IF EXISTS sync_log", []).unwrap();
         conn.pragma_update(None, "user_version", 1_i32).unwrap();
-
-        // 验证 v1 没有 sync_log 表
-        let has_sync_log: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sync_log'",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(false);
-        assert!(!has_sync_log, "v1 should not have sync_log table");
-
         drop(conn);
 
         // 重新打开，触发迁移
         let conn2 = init_database(&db_path).unwrap();
 
         // 验证 v2 有 sync_log 表
-        let has_sync_log: bool = conn2.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sync_log'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let has_sync_log: bool = conn2
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sync_log'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(has_sync_log, "v2 should have sync_log table");
 
         // 验证版本号
@@ -579,7 +635,11 @@ mod tests {
     #[test]
     fn test_book_dao_crud() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_book_dao.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_book_dao.db")
+            .to_string_lossy()
+            .to_string();
         let conn = init_database(&db_path).unwrap();
         // Insert required book_source for foreign key constraint
         conn.execute(
@@ -588,7 +648,9 @@ mod tests {
         ).unwrap();
         let dao = crate::book_dao::BookDao::new(&conn);
 
-        let book = dao.create("source1", Some("Test Source"), "Test Book", Some("Author")).unwrap();
+        let book = dao
+            .create("source1", Some("Test Source"), "Test Book", Some("Author"))
+            .unwrap();
         assert_eq!(book.name, "Test Book");
         assert_eq!(book.source_id, "source1");
 
@@ -613,7 +675,11 @@ mod tests {
     #[test]
     fn test_source_dao_crud() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_source_dao.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_source_dao.db")
+            .to_string_lossy()
+            .to_string();
         let mut conn = init_database(&db_path).unwrap();
         let dao = crate::source_dao::SourceDao::new(&mut conn);
 
@@ -635,26 +701,64 @@ mod tests {
     #[test]
     fn test_source_dao_batch_insert() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_batch.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_batch.db")
+            .to_string_lossy()
+            .to_string();
         let mut conn = init_database(&db_path).unwrap();
         let mut dao = crate::source_dao::SourceDao::new(&mut conn);
         let now = chrono::Utc::now().timestamp();
         let sources = vec![
             crate::models::BookSource {
-                id: "bs1".into(), name: "Source 1".into(), url: "https://s1.com".into(),
-                source_type: 0, group_name: None, enabled: true, custom_order: 0, weight: 0,
-                rule_search: None, rule_book_info: None, rule_toc: None, rule_content: None,
-                login_url: None, header: None, js_lib: None, book_url_pattern: None,
-                rule_explore: None, explore_url: None, enabled_explore: true, last_update_time: 0, book_source_comment: None,
-                created_at: now, updated_at: now,
+                id: "bs1".into(),
+                name: "Source 1".into(),
+                url: "https://s1.com".into(),
+                source_type: 0,
+                group_name: None,
+                enabled: true,
+                custom_order: 0,
+                weight: 0,
+                rule_search: None,
+                rule_book_info: None,
+                rule_toc: None,
+                rule_content: None,
+                login_url: None,
+                header: None,
+                js_lib: None,
+                book_url_pattern: None,
+                rule_explore: None,
+                explore_url: None,
+                enabled_explore: true,
+                last_update_time: 0,
+                book_source_comment: None,
+                created_at: now,
+                updated_at: now,
             },
             crate::models::BookSource {
-                id: "bs2".into(), name: "Source 2".into(), url: "https://s2.com".into(),
-                source_type: 0, group_name: None, enabled: true, custom_order: 0, weight: 0,
-                rule_search: None, rule_book_info: None, rule_toc: None, rule_content: None,
-                login_url: None, header: None, js_lib: None, book_url_pattern: None,
-                rule_explore: None, explore_url: None, enabled_explore: true, last_update_time: 0, book_source_comment: None,
-                created_at: now, updated_at: now,
+                id: "bs2".into(),
+                name: "Source 2".into(),
+                url: "https://s2.com".into(),
+                source_type: 0,
+                group_name: None,
+                enabled: true,
+                custom_order: 0,
+                weight: 0,
+                rule_search: None,
+                rule_book_info: None,
+                rule_toc: None,
+                rule_content: None,
+                login_url: None,
+                header: None,
+                js_lib: None,
+                book_url_pattern: None,
+                rule_explore: None,
+                explore_url: None,
+                enabled_explore: true,
+                last_update_time: 0,
+                book_source_comment: None,
+                created_at: now,
+                updated_at: now,
             },
         ];
         dao.batch_insert(&sources).unwrap();
@@ -667,7 +771,11 @@ mod tests {
     #[test]
     fn test_source_dao_import_from_json() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_import.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_import.db")
+            .to_string_lossy()
+            .to_string();
         let mut conn = init_database(&db_path).unwrap();
         let mut dao = crate::source_dao::SourceDao::new(&mut conn);
         let json = r#"[{"id":"ij1","name":"Imported","url":"https://imp.com","source_type":0,"enabled":true,"custom_order":0,"weight":0,"rule_search":null,"rule_book_info":null,"rule_toc":null,"rule_content":null,"login_url":null,"header":null,"js_lib":null,"created_at":0,"updated_at":0}]"#;
@@ -681,7 +789,11 @@ mod tests {
     #[test]
     fn test_chapter_dao_crud() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_chapter_dao.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_chapter_dao.db")
+            .to_string_lossy()
+            .to_string();
         let conn = init_database(&db_path).unwrap();
         // Insert required book_source for foreign key constraint
         conn.execute(
@@ -692,14 +804,23 @@ mod tests {
         let book = book_dao.create("src1", None, "Book", None).unwrap();
 
         let dao = crate::chapter_dao::ChapterDao::new(&conn);
-        let chapter = dao.create(&book.id, 0, "Chapter 1", "https://example.com/ch1").unwrap();
+        let chapter = dao
+            .create(&book.id, 0, "Chapter 1", "https://example.com/ch1")
+            .unwrap();
         assert_eq!(chapter.title, "Chapter 1");
 
         let retrieved = dao.get_by_id(&chapter.id).unwrap().unwrap();
         assert_eq!(retrieved.index_num, 0);
 
         dao.update_content(&chapter.id, "New content").unwrap();
-        assert_eq!(dao.get_by_id(&chapter.id).unwrap().unwrap().content.as_deref(), Some("New content"));
+        assert_eq!(
+            dao.get_by_id(&chapter.id)
+                .unwrap()
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("New content")
+        );
 
         assert_eq!(dao.get_by_book(&book.id).unwrap().len(), 1);
 
@@ -710,7 +831,11 @@ mod tests {
     #[test]
     fn test_progress_dao_crud() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_progress_dao.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_progress_dao.db")
+            .to_string_lossy()
+            .to_string();
         let conn = init_database(&db_path).unwrap();
         // Insert required book_source for foreign key constraint
         conn.execute(
@@ -728,7 +853,10 @@ mod tests {
 
         let bookmark = dao.create_bookmark(&book.id, 3, 10, Some("Great")).unwrap();
         assert_eq!(dao.get_bookmarks(&book.id).unwrap().len(), 1);
-        assert_eq!(dao.get_bookmarks(&book.id).unwrap()[0].content.as_deref(), Some("Great"));
+        assert_eq!(
+            dao.get_bookmarks(&book.id).unwrap()[0].content.as_deref(),
+            Some("Great")
+        );
 
         dao.delete_bookmark(&bookmark.id).unwrap();
         assert_eq!(dao.get_bookmarks(&book.id).unwrap().len(), 0);
@@ -740,7 +868,11 @@ mod tests {
     #[test]
     fn test_replace_rule_dao_crud() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_replace_rule_dao.db").to_string_lossy().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test_replace_rule_dao.db")
+            .to_string_lossy()
+            .to_string();
         let conn = init_database(&db_path).unwrap();
         let dao = crate::replace_rule_dao::ReplaceRuleDao::new(&conn);
 

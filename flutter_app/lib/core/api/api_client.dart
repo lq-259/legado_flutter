@@ -3,13 +3,21 @@ import 'package:dio/dio.dart';
 class ApiClient {
   final Dio _dio;
 
-  ApiClient({required String baseUrl})
+  ApiClient({required String baseUrl, String? token})
       : _dio = Dio(BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            if (token != null) 'Authorization': 'Bearer $token',
+          },
         ));
+
+  void setToken(String? token) {
+    _dio.options.headers['Authorization'] =
+        token != null ? 'Bearer $token' : null;
+  }
 
   Future<Response<dynamic>> get(String path) => _dio.get(path);
 

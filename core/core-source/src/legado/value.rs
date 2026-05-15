@@ -65,12 +65,11 @@ impl LegadoValue {
             LegadoValue::Float(f) => f.to_string(),
             LegadoValue::Bool(b) => b.to_string(),
             LegadoValue::Null => String::new(),
-            LegadoValue::Array(arr) => {
-                arr.iter()
-                    .map(|v| v.as_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("")
-            }
+            LegadoValue::Array(arr) => arr
+                .iter()
+                .map(|v| v.as_string_lossy())
+                .collect::<Vec<_>>()
+                .join(""),
             LegadoValue::Map(m) => {
                 let mut s = String::new();
                 for (_, v) in m {
@@ -114,11 +113,9 @@ impl LegadoValue {
         match self {
             LegadoValue::String(s) | LegadoValue::Html(s) => JsonValue::String(s.clone()),
             LegadoValue::Int(i) => JsonValue::Number((*i).into()),
-            LegadoValue::Float(f) => {
-                serde_json::Number::from_f64(*f)
-                    .map(JsonValue::Number)
-                    .unwrap_or(JsonValue::Null)
-            }
+            LegadoValue::Float(f) => serde_json::Number::from_f64(*f)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null),
             LegadoValue::Bool(b) => JsonValue::Bool(*b),
             LegadoValue::Null => JsonValue::Null,
             LegadoValue::Array(arr) => {
@@ -203,5 +200,8 @@ pub fn legado_values_to_strings(values: &[LegadoValue]) -> Vec<String> {
 
 /// 将字符串数组转为 LegadoValue 数组
 pub fn strings_to_legado_values(strings: &[String]) -> Vec<LegadoValue> {
-    strings.iter().map(|s| LegadoValue::String(s.clone())).collect()
+    strings
+        .iter()
+        .map(|s| LegadoValue::String(s.clone()))
+        .collect()
 }

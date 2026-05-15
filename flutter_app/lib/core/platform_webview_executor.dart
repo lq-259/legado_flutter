@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +23,8 @@ class WebViewExecutionResult {
 }
 
 class PlatformWebViewExecutor {
-  static const MethodChannel _channel = MethodChannel('legado/webview_executor');
+  static const MethodChannel _channel =
+      MethodChannel('legado/webview_executor');
 
   Future<WebViewExecutionResult> execute(
     BuildContext context,
@@ -50,9 +53,11 @@ class PlatformWebViewExecutor {
     return result;
   }
 
-  Future<WebViewExecutionResult?> _executeNative(PlatformRequest request) async {
+  Future<WebViewExecutionResult?> _executeNative(
+      PlatformRequest request) async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('execute', {
+      final result =
+          await _channel.invokeMapMethod<String, dynamic>('execute', {
         'url': request.url,
         'webJs': request.webJs,
         'sourceRegex': request.sourceRegex,
@@ -69,7 +74,10 @@ class PlatformWebViewExecutor {
       );
     } on MissingPluginException {
       return null;
-    } on PlatformException {
+    } on PlatformException catch (e) {
+      if (Platform.isAndroid) {
+        throw StateError(e.message ?? 'Android WebView executor failed');
+      }
       return null;
     }
   }
@@ -107,8 +115,20 @@ class _WebViewExecutionPageState extends State<_WebViewExecutionPage> {
             }
           },
         ),
-      )
-      ..loadRequest(Uri.parse(widget.request.url!));
+      );
+    final ua = widget.request.userAgent;
+    if (ua != null && ua.isNotEmpty) {
+      _controller.setUserAgent(ua);
+    }
+    final headers = widget.request.headers;
+    if (headers.isNotEmpty) {
+      _controller.loadRequest(
+        Uri.parse(widget.request.url!),
+        headers: headers,
+      );
+    } else {
+      _controller.loadRequest(Uri.parse(widget.request.url!));
+    }
   }
 
   Future<void> _executeRules() async {
@@ -131,7 +151,8 @@ class _WebViewExecutionPageState extends State<_WebViewExecutionPage> {
       Navigator.of(context).pop(
         WebViewExecutionResult(
           content: content,
-          sourceRegexRequired: widget.request.sourceRegex?.trim().isNotEmpty == true,
+          sourceRegexRequired:
+              widget.request.sourceRegex?.trim().isNotEmpty == true,
         ),
       );
     } catch (e) {
@@ -160,10 +181,12 @@ $script
   String _normalizeJsResult(Object? value) {
     if (value == null) return '';
     final text = value.toString();
-    if (text.length >= 2 &&
-        ((text.startsWith('"') && text.endsWith('"')) ||
-            (text.startsWith("'") && text.endsWith("'")))) {
-      return text.substring(1, text.length - 1);
+    if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+      try {
+        return jsonDecode(text) as String;
+      } catch (_) {
+        return text.substring(1, text.length - 1);
+      }
     }
     return text;
   }

@@ -13,8 +13,8 @@
 //!   baseUrl
 //!   result
 
-use std::collections::HashMap;
 use super::value::LegadoValue;
+use std::collections::HashMap;
 
 /// 检测规则是否为 @js: 或 js: 类型
 pub fn is_js_rule(rule: &str) -> bool {
@@ -55,10 +55,19 @@ pub fn build_js_vars(
 ) -> HashMap<String, LegadoValue> {
     let mut vars = HashMap::new();
 
-    vars.insert("baseUrl".to_string(), LegadoValue::String(base_url.to_string()));
-    vars.insert("__source_url__".to_string(), LegadoValue::String(source_url.to_string()));
+    vars.insert(
+        "baseUrl".to_string(),
+        LegadoValue::String(base_url.to_string()),
+    );
+    vars.insert(
+        "__source_url__".to_string(),
+        LegadoValue::String(source_url.to_string()),
+    );
     vars.insert("src".to_string(), LegadoValue::String(src.to_string()));
-    vars.insert("result".to_string(), LegadoValue::String(result.to_string()));
+    vars.insert(
+        "result".to_string(),
+        LegadoValue::String(result.to_string()),
+    );
     vars.insert("title".to_string(), LegadoValue::String(title.to_string()));
     vars.insert("key".to_string(), LegadoValue::String(key.to_string()));
     vars.insert("page".to_string(), LegadoValue::Int(page as i64));
@@ -69,7 +78,13 @@ pub fn build_js_vars(
 /// 简单的 JS 变量 Map（最小集）
 pub fn build_minimal_js_vars(base_url: &str, source_url: &str) -> HashMap<String, LegadoValue> {
     let mut vars = HashMap::new();
-    vars.insert("baseUrl".to_string(), LegadoValue::String(base_url.to_string()));
-    vars.insert("__source_url__".to_string(), LegadoValue::String(source_url.to_string()));
+    vars.insert(
+        "baseUrl".to_string(),
+        LegadoValue::String(base_url.to_string()),
+    );
+    vars.insert(
+        "__source_url__".to_string(),
+        LegadoValue::String(source_url.to_string()),
+    );
     vars
 }

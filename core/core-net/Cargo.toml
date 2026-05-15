@@ -22,6 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # 编码处理
 encoding_rs = "0.8"
 base64 = "0.21"
+uuid = { version = "1.10", features = ["v4"] }
 
 [dev-dependencies]
 httpmock = "0.7"

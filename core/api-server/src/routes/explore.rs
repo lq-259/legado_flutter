@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Query, State},
     routing::get,
     Router,
 };
@@ -52,20 +52,21 @@ async fn explore(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ListExploreRequest {
+pub struct ListExploreQuery {
     pub source_id: String,
 }
 
 async fn list_explore_entries(
     State(state): State<AppState>,
-    Json(req): Json<ListExploreRequest>,
+    Query(params): Query<ListExploreQuery>,
 ) -> Result<Json<Vec<core_source::parser::ExploreEntry>>, ApiError> {
+    let source_id = params.source_id;
     let mut conn = crate::util::open_db(&state.db_path)?;
     let source_dao = core_storage::source_dao::SourceDao::new(&mut conn);
     let source = source_dao
-        .get_by_id(&req.source_id)
+        .get_by_id(&source_id)
         .map_err(|e| ApiError::Database(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("书源不存在: {}", req.source_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("书源不存在: {}", source_id)))?;
 
     let core_source = util::storage_to_core_source(&source)?;
     let entries = core_source::parser::BookSourceParser::get_explore_entries(&core_source);
@@ -74,6 +75,5 @@ async fn list_explore_entries(
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/explore", get(list_explore_entries).post(explore))
+    Router::new().route("/api/explore", get(list_explore_entries).post(explore))
 }

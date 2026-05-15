@@ -11,19 +11,19 @@ pub struct BookSource {
     pub id: String,
     pub name: String,
     pub url: String,
-    
+
     #[serde(default)]
-    pub source_type: i32,  // 0=小说, 1=音频, 2=图片, 3=RSS
+    pub source_type: i32, // 0=小说, 1=音频, 2=图片, 3=RSS
     #[serde(default)]
     pub enabled: bool,
-    
+
     #[serde(default)]
     pub group_name: Option<String>,
     #[serde(default)]
     pub custom_order: i32,
     #[serde(default)]
     pub weight: i32,
-    
+
     /// 规则（JSON 格式）
     #[serde(default)]
     pub rule_search: Option<SearchRule>,
@@ -33,7 +33,7 @@ pub struct BookSource {
     pub rule_toc: Option<TocRule>,
     #[serde(default)]
     pub rule_content: Option<ContentRule>,
-    
+
     /// 其他配置
     #[serde(default)]
     pub login_url: Option<String>,
@@ -53,7 +53,7 @@ pub struct BookSource {
     pub last_update_time: i64,
     #[serde(default)]
     pub book_source_comment: Option<String>,
-    
+
     #[serde(default = "now_timestamp")]
     pub created_at: i64,
     #[serde(default = "now_timestamp")]
@@ -68,9 +68,9 @@ fn now_timestamp() -> i64 {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchRule {
     #[serde(default)]
-    pub search_url: Option<String>,  // 搜索URL模板（含{{keyword}}占位符）
+    pub search_url: Option<String>, // 搜索URL模板（含{{keyword}}占位符）
     #[serde(default)]
-    pub book_list: Option<String>,   // 搜索结果列表的选择器
+    pub book_list: Option<String>, // 搜索结果列表的选择器
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
@@ -155,21 +155,19 @@ pub struct SearchResultItem {
 }
 
 /// 提取类型后缀
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ExtractType {
-    Text,       // @text - 提取文本内容
-    Html,       // @html - 提取 HTML 结构
-    OwnText,    // @ownText - 仅元素自身文本
-    Href,       // @href - 提取链接地址
-    Src,        // @src - 提取资源地址
-    TextNode,   // @textNode - 单个文本节点 / @textNodes - 所有文本节点
-    Content,    // @content - 提取 content 属性 (用于 meta 标签等)
+    Text,         // @text - 提取文本内容
+    Html,         // @html - 提取 HTML 结构
+    OwnText,      // @ownText - 仅元素自身文本
+    Href,         // @href - 提取链接地址
+    Src,          // @src - 提取资源地址
+    TextNode,     // @textNode - 单个文本节点 / @textNodes - 所有文本节点
+    Content,      // @content - 提取 content 属性 (用于 meta 标签等)
     Attr(String), // @attrName - 提取任意属性 (e.g. @title, @data-id)
     #[default]
-    None,       // 无后缀
+    None, // 无后缀
 }
-
 
 impl ExtractType {
     /// 从规则字符串中解析提取类型
@@ -191,9 +189,11 @@ impl ExtractType {
         } else if let Some(s) = rule.strip_suffix("@src") {
             (s, Self::Src)
         } else if let Some(pos) = rule.rfind('@') {
-            let attr_name = &rule[pos+1..];
+            let attr_name = &rule[pos + 1..];
             if !attr_name.is_empty()
-                && attr_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                && attr_name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
                 && pos > 0
             {
                 (&rule[..pos], Self::Attr(attr_name.to_string()))

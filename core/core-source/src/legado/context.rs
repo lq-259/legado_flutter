@@ -120,14 +120,40 @@ impl RuleContext {
             "title" => LegadoValue::String(self.title.clone()),
             "key" | "keyword" => LegadoValue::String(self.key.clone()),
             "page" => LegadoValue::Int(self.page as i64),
-            _ => self.variables.get(name).cloned()
-                .or_else(|| self.shared_variables.lock().ok().and_then(|vars| vars.get(name).cloned()))
+            _ => self
+                .variables
+                .get(name)
+                .cloned()
+                .or_else(|| {
+                    self.shared_variables
+                        .lock()
+                        .ok()
+                        .and_then(|vars| vars.get(name).cloned())
+                })
                 .unwrap_or(LegadoValue::Null),
         }
     }
 
     pub fn set_variable(&mut self, name: impl Into<String>, value: LegadoValue) {
         let name = name.into();
+        match name.as_str() {
+            "baseUrl" | "base_url" => self.base_url = value.as_string_lossy(),
+            "src" => self.src = value.as_string_lossy(),
+            "result" => {
+                self.result = match value.clone() {
+                    LegadoValue::Array(values) => values,
+                    other => vec![other],
+                };
+            }
+            "title" => self.title = value.as_string_lossy(),
+            "key" | "keyword" => self.key = value.as_string_lossy(),
+            "page" => {
+                if let LegadoValue::Int(page) = &value {
+                    self.page = *page as i32;
+                }
+            }
+            _ => {}
+        }
         self.variables.insert(name.clone(), value.clone());
         if let Ok(mut vars) = self.shared_variables.lock() {
             vars.insert(name, value);
@@ -135,7 +161,11 @@ impl RuleContext {
     }
 
     pub fn all_variables(&self) -> HashMap<String, LegadoValue> {
-        let mut vars = self.shared_variables.lock().map(|v| v.clone()).unwrap_or_default();
+        let mut vars = self
+            .shared_variables
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_default();
         vars.extend(self.variables.clone());
         vars
     }

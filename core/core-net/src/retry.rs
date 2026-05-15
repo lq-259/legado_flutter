@@ -42,7 +42,7 @@ impl RetryExecutor {
         E: std::fmt::Display,
     {
         let mut retries = 0;
-        
+
         loop {
             match operation().await {
                 Ok(value) => return Ok(value),
@@ -50,14 +50,20 @@ impl RetryExecutor {
                     if retries >= self.config.max_retries {
                         return Err(e);
                     }
-                    
+
                     // 计算退避时间：base * 2^retries
-                    let backoff_ms = self.config.base_backoff_ms * 2u64.pow(retries as u32);
+                    let backoff_ms =
+                        self.config.base_backoff_ms * 2u64.saturating_pow(retries as u32);
                     let backoff_ms = backoff_ms.min(self.config.max_backoff_ms);
-                    
-                    warn!("操作失败: {}，{}ms 后重试（{}/{}）", 
-                         e, backoff_ms, retries + 1, self.config.max_retries);
-                    
+
+                    warn!(
+                        "操作失败: {}，{}ms 后重试（{}/{}）",
+                        e,
+                        backoff_ms,
+                        retries + 1,
+                        self.config.max_retries
+                    );
+
                     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                     retries += 1;
                 }

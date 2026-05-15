@@ -17,9 +17,7 @@ pub struct CreateReplaceRuleRequest {
     pub scope: Option<i32>,
 }
 
-async fn list_rules(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+async fn list_rules(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = util::open_db(&state.db_path)?;
     let dao = core_storage::replace_rule_dao::ReplaceRuleDao::new(&conn);
     let rules = dao
@@ -49,7 +47,12 @@ async fn create_rule(
     let conn = util::open_db(&state.db_path)?;
     let dao = core_storage::replace_rule_dao::ReplaceRuleDao::new(&conn);
     let rule = dao
-        .create(&req.name, &req.pattern, &req.replacement, req.scope.unwrap_or(0))
+        .create(
+            &req.name,
+            &req.pattern,
+            &req.replacement,
+            req.scope.unwrap_or(0),
+        )
         .map_err(|e| ApiError::Database(e.to_string()))?;
     Ok(Json(serde_json::to_value(rule)?))
 }

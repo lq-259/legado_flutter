@@ -25,7 +25,7 @@ pub fn replace_url_placeholders(url_template: &str, keyword: &str) -> String {
 /// 从规则字符串中提取提取类型
 pub fn extract_type_from_rule(rule: &str) -> (String, Option<&str>) {
     let trimmed = rule.trim();
-    
+
     if let Some(s) = trimmed.strip_suffix("@text") {
         (s.to_string(), Some("text"))
     } else if let Some(s) = trimmed.strip_suffix("@html") {
@@ -44,43 +44,43 @@ pub fn extract_type_from_rule(rule: &str) -> (String, Option<&str>) {
 /// 验证书源规则的完整性
 pub fn validate_source_rules(source: &BookSource) -> Vec<String> {
     let mut errors = Vec::new();
-    
+
     // 检查搜索规则
     if let Some(search_rule) = &source.rule_search {
         if search_rule.book_list.is_none() {
             errors.push("搜索规则缺少 bookList".to_string());
         }
     }
-    
+
     // 检查详情规则
     if source.rule_book_info.is_some() {
         // 详情规则可以为空，因为有些书源不需要
     }
-    
+
     // 检查目录规则
     if let Some(toc_rule) = &source.rule_toc {
         if toc_rule.chapter_name.is_none() && toc_rule.chapter_url.is_none() {
             errors.push("目录规则缺少 chapterName 或 chapterUrl".to_string());
         }
     }
-    
+
     // 检查内容规则
     if let Some(content_rule) = &source.rule_content {
         if content_rule.content.is_none() {
             errors.push("内容规则缺少 content".to_string());
         }
     }
-    
+
     errors
 }
 
 /// 合并多个搜索结果（去重）
 pub fn merge_search_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
     use std::collections::HashMap;
-    
+
     let mut seen = HashMap::new();
     let mut merged = Vec::new();
-    
+
     for result in results {
         let key = format!("{}|{}", result.name, result.author);
         if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
@@ -88,7 +88,7 @@ pub fn merge_search_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
             merged.push(result);
         }
     }
-    
+
     merged
 }
 
@@ -109,12 +109,12 @@ mod tests {
             build_full_url("https://example.com/books", "/chapter/1"),
             "https://example.com/chapter/1"
         );
-        
+
         assert_eq!(
             build_full_url("https://example.com/books/", "chapter/1"),
             "https://example.com/books/chapter/1"
         );
-        
+
         assert_eq!(
             build_full_url("https://example.com", "chapter/1"),
             "https://example.com/chapter/1"
@@ -132,7 +132,7 @@ mod tests {
         let (rule, extract_type) = extract_type_from_rule(".title@text");
         assert_eq!(rule, ".title");
         assert_eq!(extract_type, Some("text"));
-        
+
         let (rule, extract_type) = extract_type_from_rule("//div[@class='test']");
         assert_eq!(rule, "//div[@class='test']");
         assert_eq!(extract_type, None);

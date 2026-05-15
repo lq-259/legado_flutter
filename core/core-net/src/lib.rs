@@ -6,16 +6,16 @@
 
 pub mod client;
 pub mod cookie;
+pub mod downloader;
+pub mod encoding;
 pub mod proxy;
 pub mod retry;
-pub mod encoding;
-pub mod downloader;
 
 // 重新导出主要类型，方便上层调用
 pub use client::{HttpClient, HttpClientConfig};
 pub use cookie::CookieManager;
-pub use proxy::{ProxyConfig, ProxyType, ProxyManager};
 pub use encoding::detect_and_decode;
+pub use proxy::{ProxyConfig, ProxyManager, ProxyType};
 
 use std::time::Duration;
 

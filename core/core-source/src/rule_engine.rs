@@ -3,16 +3,16 @@
 //! 负责解析和执行书源规则表达式（CSS/XPath/JSONPath/Regex/JavaScript）。
 //! 对应原 Legado 的 AnalyzeRule 模块 (model/analyzeRule/)。
 
-use scraper::{Html, Selector, Node};
+use crate::script_engine::{ScriptContext, ScriptEngine, ScriptResult};
+use crate::types::ExtractType;
+use jsonpath_lib as jsonpath;
 use regex::RegexBuilder;
-use tracing::debug;
+use scraper::{Html, Node, Selector};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use sxd_document::dom::ChildOfElement as SxdChild;
 use sxd_document::parser as xpath_parser;
 use sxd_xpath::{Context, Factory, Value as XPathValue};
-use jsonpath_lib as jsonpath;
-use crate::types::ExtractType;
-use crate::script_engine::{ScriptEngine, ScriptContext, ScriptResult};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use tracing::debug;
 
 /// 规则类型
 /// Legado ## replace rule
@@ -25,11 +25,11 @@ pub struct ReplaceRule {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum RuleType {
     #[default]
-    Css,        // CSS 选择器
+    Css, // CSS 选择器
     XPath,      // XPath 表达式
     JsonPath,   // JSONPath 表达式
     Regex,      // 正则表达式
-    JavaScript,  // JavaScript 脚本
+    JavaScript, // JavaScript 脚本
 }
 
 impl std::fmt::Display for RuleType {
@@ -55,8 +55,6 @@ pub struct RuleExpression {
     pub replace_rules: Vec<ReplaceRule>,
 }
 
-
-
 impl RuleExpression {
     /// 解析规则表达式字符串
     /// 支持格式：
@@ -68,16 +66,16 @@ impl RuleExpression {
     pub fn parse(rule_str: &str) -> Option<Self> {
         let (trimmed, replace_rules) = strip_legado_replace_rules(rule_str);
         let trimmed = trimmed.trim();
-        
+
         // 空规则
         if trimmed.is_empty() {
             return None;
         }
-        
+
         // 解析提取类型后缀
         let (expr, extract_type) = Self::parse_extract_type(trimmed);
         let (trimmed, css_index, css_skip) = parse_css_modifiers(expr);
-        
+
         // 判断规则类型
         if trimmed.starts_with('/') && !trimmed.starts_with("//") {
             // Regex enclosure: /pattern/ 或 /pattern/flags，标志只限 igmsxuU
@@ -86,7 +84,10 @@ impl RuleExpression {
             let looks_like_regex_delimiter = last_slash_idx.map_or(false, |idx| {
                 idx > 0 && {
                     let after = &trimmed[idx + 1..];
-                    after.is_empty() || after.chars().all(|c| matches!(c, 'i' | 'g' | 'm' | 's' | 'x' | 'u' | 'U'))
+                    after.is_empty()
+                        || after
+                            .chars()
+                            .all(|c| matches!(c, 'i' | 'g' | 'm' | 's' | 'x' | 'u' | 'U'))
                 }
             });
             if looks_like_regex_delimiter {
@@ -129,7 +130,10 @@ impl RuleExpression {
                 css_skip,
                 replace_rules,
             })
-        } else if trimmed.starts_with("$.") || trimmed.starts_with("$[") || trimmed.starts_with("@Json:") {
+        } else if trimmed.starts_with("$.")
+            || trimmed.starts_with("$[")
+            || trimmed.starts_with("@Json:")
+        {
             // JsonPath
             let expr = trimmed.strip_prefix("@Json:").unwrap_or(trimmed);
             Some(Self {
@@ -182,7 +186,7 @@ impl RuleExpression {
             })
         }
     }
-    
+
     /// 解析提取类型后缀（@text, @html, etc.）
     fn parse_extract_type(rule_str: &str) -> (&str, ExtractType) {
         ExtractType::from_rule(rule_str)
@@ -203,77 +207,67 @@ impl RuleExpression {
     /// CSS 选择器执行
     fn evaluate_css(&self, content: &str) -> Result<Vec<String>, RuleError> {
         debug!("执行 CSS 规则: {}", self.expression);
-        
+
         let document = Html::parse_document(content);
-        
+
         // 尝试解析为 CSS 选择器
         let selector = parse_selector_safely(&self.expression)?;
-        
+
         let mut results: Vec<String> = match self.extract_type {
-            ExtractType::Text => {
-                document
-                    .select(&selector)
-                    .map(|element| element.text().collect::<Vec<_>>().join(""))
-                    .collect()
-            }
-            ExtractType::Html => {
-                document
-                    .select(&selector)
-                    .map(|element| element.inner_html())
-                    .collect()
-            }
-            ExtractType::OwnText => {
-                document
-                    .select(&selector)
-                    .map(|element| {
-                        element.children()
-                            .filter_map(|child| {
-                                if let Node::Text(t) = child.value() {
-                                    Some(t.text.to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("")
-                    })
-                    .collect()
-            }
-            ExtractType::Href => {
-                document
-                    .select(&selector)
-                    .filter_map(|element| element.value().attr("href"))
-                    .map(|s| s.to_string())
-                    .collect()
-            }
-            ExtractType::Src => {
-                document
-                    .select(&selector)
-                    .filter_map(|element| element.value().attr("src"))
-                    .map(|s| s.to_string())
-                    .collect()
-            }
-            ExtractType::Attr(ref attr) => {
-                document
-                    .select(&selector)
-                    .filter_map(|element| element.value().attr(attr))
-                    .map(|s| s.to_string())
-                    .collect()
-            }
-            _ => {
-                document
-                    .select(&selector)
-                    .map(|element| element.inner_html())
-                    .collect()
-            }
+            ExtractType::Text => document
+                .select(&selector)
+                .map(|element| element.text().collect::<Vec<_>>().join(""))
+                .collect(),
+            ExtractType::Html => document
+                .select(&selector)
+                .map(|element| element.inner_html())
+                .collect(),
+            ExtractType::OwnText => document
+                .select(&selector)
+                .map(|element| {
+                    element
+                        .children()
+                        .filter_map(|child| {
+                            if let Node::Text(t) = child.value() {
+                                Some(t.text.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .collect(),
+            ExtractType::Href => document
+                .select(&selector)
+                .filter_map(|element| element.value().attr("href"))
+                .map(|s| s.to_string())
+                .collect(),
+            ExtractType::Src => document
+                .select(&selector)
+                .filter_map(|element| element.value().attr("src"))
+                .map(|s| s.to_string())
+                .collect(),
+            ExtractType::Attr(ref attr) => document
+                .select(&selector)
+                .filter_map(|element| element.value().attr(attr))
+                .map(|s| s.to_string())
+                .collect(),
+            _ => document
+                .select(&selector)
+                .map(|element| element.inner_html())
+                .collect(),
         };
-        
+
         if let Some(skip) = self.css_skip {
             results = results.into_iter().skip(skip).collect();
         }
         if let Some(index) = self.css_index {
             let index = if index < 0 {
-                results.len().checked_sub(index.unsigned_abs()).unwrap_or(usize::MAX)
+                results
+                    .len()
+                    .checked_sub(index.unsigned_abs())
+                    .unwrap_or(usize::MAX)
             } else {
                 index as usize
             };
@@ -286,12 +280,12 @@ impl RuleExpression {
     /// 正则表达式执行
     fn evaluate_regex(&self, content: &str) -> Result<Vec<String>, RuleError> {
         debug!("执行 Regex 规则: {}", self.expression);
-        
+
         // 解析正则（支持 /pattern/flags 格式）
         let (pattern, flags) = self.parse_regex_with_flags(&self.expression);
-        
+
         let mut builder = RegexBuilder::new(pattern);
-        
+
         if flags.contains('i') {
             builder.case_insensitive(true);
         }
@@ -312,11 +306,13 @@ impl RuleExpression {
             builder.swap_greed(true);
         }
         // 'g' 标志: Rust captures_iter 已返回所有非重叠匹配，无需显式处理
-        
-        let re = builder.build()
+
+        let re = builder
+            .build()
             .map_err(|e| RuleError::ParseError(format!("正则编译失败: {}", e)))?;
-        
-        let results: Vec<String> = re.captures_iter(content)
+
+        let results: Vec<String> = re
+            .captures_iter(content)
             .map(|cap| {
                 // 返回第一个捕获组，如果没有则返回整个匹配
                 if cap.len() > 1 {
@@ -326,7 +322,7 @@ impl RuleExpression {
                 }
             })
             .collect();
-        
+
         Ok(results)
     }
 
@@ -340,20 +336,20 @@ impl RuleExpression {
         let xpath_opt = Factory::new()
             .build(&self.expression)
             .map_err(|e| RuleError::ParseError(format!("XPath 编译失败: {}", e)))?;
-        let xpath = xpath_opt
-            .ok_or_else(|| RuleError::ParseError("XPath 表达式编译返回空".into()))?;
+        let xpath =
+            xpath_opt.ok_or_else(|| RuleError::ParseError("XPath 表达式编译返回空".into()))?;
 
         let context = Context::new();
-        let value = xpath.evaluate(&context, document.root())
+        let value = xpath
+            .evaluate(&context, document.root())
             .map_err(|e| RuleError::EvaluationError(format!("XPath 执行失败: {}", e)))?;
 
         match value {
             XPathValue::Nodeset(nodes) => {
-                let results: Vec<String> = nodes.iter().map(|node| {
-                    match self.extract_type {
-                        ExtractType::Html => {
-                            node.string_value()
-                        }
+                let results: Vec<String> = nodes
+                    .iter()
+                    .map(|node| match self.extract_type {
+                        ExtractType::Html => node.string_value(),
                         ExtractType::Href | ExtractType::Src => {
                             let attr = match self.extract_type {
                                 ExtractType::Href => "href",
@@ -365,26 +361,25 @@ impl RuleExpression {
                                 .map(|a| a.value().to_string())
                                 .unwrap_or_default()
                         }
-                        ExtractType::OwnText => {
-                            node.element()
-                                .map(|el| {
-                                    el.children()
-                                        .into_iter()
-                                        .filter_map(|child| {
-                                            if let SxdChild::Text(t) = child {
-                                                Some(t.text().to_string())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("")
-                                })
-                                .unwrap_or_else(|| node.string_value())
-                        }
+                        ExtractType::OwnText => node
+                            .element()
+                            .map(|el| {
+                                el.children()
+                                    .into_iter()
+                                    .filter_map(|child| {
+                                        if let SxdChild::Text(t) = child {
+                                            Some(t.text().to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("")
+                            })
+                            .unwrap_or_else(|| node.string_value()),
                         _ => node.string_value(),
-                    }
-                }).collect();
+                    })
+                    .collect();
                 Ok(results)
             }
             XPathValue::String(s) => Ok(vec![s]),
@@ -425,7 +420,7 @@ impl RuleExpression {
             let end_slash = rest.rfind('/');
             if let Some(pos) = end_slash {
                 let pattern = &rest[..pos];
-                let flags = &rest[pos+1..];
+                let flags = &rest[pos + 1..];
                 return (pattern, flags.to_string());
             }
         }
@@ -433,9 +428,13 @@ impl RuleExpression {
     }
 
     fn evaluate_javascript(&self, content: &str) -> Result<Vec<String>, RuleError> {
-        debug!("执行 JS 规则: {}...", &self.expression.chars().take(60).collect::<String>());
+        debug!(
+            "执行 JS 规则: {}...",
+            &self.expression.chars().take(60).collect::<String>()
+        );
 
-        let script = self.expression
+        let script = self
+            .expression
             .strip_prefix("js:")
             .or_else(|| self.expression.strip_prefix("@js:"))
             .unwrap_or(&self.expression);
@@ -462,10 +461,9 @@ fn script_result_to_strings(result: ScriptResult) -> Vec<String> {
         ScriptResult::Int(i) => vec![i.to_string()],
         ScriptResult::Float(f) => vec![f.to_string()],
         ScriptResult::Bool(b) => vec![b.to_string()],
-        ScriptResult::Array(arr) => arr.into_iter()
-            .flat_map(script_result_to_strings)
-            .collect(),
-        ScriptResult::Map(map) => map.into_values()
+        ScriptResult::Array(arr) => arr.into_iter().flat_map(script_result_to_strings).collect(),
+        ScriptResult::Map(map) => map
+            .into_values()
             .flat_map(script_result_to_strings)
             .collect(),
         ScriptResult::Null => vec![],
@@ -476,11 +474,31 @@ fn looks_like_xpath_function(s: &str) -> bool {
     if let Some(paren_pos) = s.find('(') {
         let prefix = &s[..paren_pos];
         const XPATH_FUNCTIONS: &[&str] = &[
-            "count", "normalize-space", "string", "concat", "contains",
-            "starts-with", "substring", "substring-before", "substring-after",
-            "string-length", "translate", "not", "true", "false", "number",
-            "sum", "floor", "ceiling", "round", "name", "local-name",
-            "namespace-uri", "lang", "position", "last",
+            "count",
+            "normalize-space",
+            "string",
+            "concat",
+            "contains",
+            "starts-with",
+            "substring",
+            "substring-before",
+            "substring-after",
+            "string-length",
+            "translate",
+            "not",
+            "true",
+            "false",
+            "number",
+            "sum",
+            "floor",
+            "ceiling",
+            "round",
+            "name",
+            "local-name",
+            "namespace-uri",
+            "lang",
+            "position",
+            "last",
         ];
         XPATH_FUNCTIONS.contains(&prefix)
     } else {
@@ -513,7 +531,9 @@ fn rfind_at_depth_zero(s: &str, c: char) -> Option<usize> {
             ')' | ']' => depth += 1,
             '(' | '[' => {
                 depth -= 1;
-                if depth < 0 { depth = 0; }
+                if depth < 0 {
+                    depth = 0;
+                }
             }
             _ if ch == c && depth == 0 => return Some(i),
             _ => {}
@@ -536,10 +556,12 @@ pub(crate) fn strip_legado_replace_rules(expr: &str) -> (&str, Vec<ReplaceRule>)
 fn parse_replace_rules(rules_str: &str) -> Vec<ReplaceRule> {
     let mut rules = Vec::new();
     for part in rules_str.split('|') {
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
         if let Some(idx) = part.find("##") {
             let pattern = &part[..idx];
-            let replacement = &part[idx+2..];
+            let replacement = &part[idx + 2..];
             rules.push(ReplaceRule {
                 pattern: pattern.to_string(),
                 replacement: replacement.to_string(),
@@ -560,7 +582,7 @@ pub(crate) fn strip_css_modifiers(expr: &str) -> (&str, Option<isize>, Option<us
     let mut skip: Option<usize> = None;
 
     if let Some(pos) = rfind_at_depth_zero(remaining, '!') {
-        let after = &remaining[pos+1..];
+        let after = &remaining[pos + 1..];
         if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()) {
             skip = after.parse().ok();
             remaining = &remaining[..pos];
@@ -568,7 +590,7 @@ pub(crate) fn strip_css_modifiers(expr: &str) -> (&str, Option<isize>, Option<us
     }
 
     if let Some(pos) = rfind_at_depth_zero(remaining, '.') {
-        let after = &remaining[pos+1..];
+        let after = &remaining[pos + 1..];
         let is_index = if let Some(digits) = after.strip_prefix('-') {
             !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
         } else {
@@ -596,7 +618,9 @@ pub(crate) fn split_css_alternatives(expr: &str) -> Vec<String> {
                 current.push(c);
             }
             ']' | ')' => {
-                if depth > 0 { depth -= 1; }
+                if depth > 0 {
+                    depth -= 1;
+                }
                 current.push(c);
             }
             '|' => {
@@ -637,7 +661,9 @@ fn apply_replace_rules(text: &str, rules: &[ReplaceRule]) -> String {
             if rule.replacement.is_empty() {
                 result = re.replace_all(&result, "").to_string();
             } else {
-                result = re.replace_all(&result, rule.replacement.as_str()).to_string();
+                result = re
+                    .replace_all(&result, rule.replacement.as_str())
+                    .to_string();
             }
         }
     }
@@ -686,9 +712,13 @@ impl RuleEngine {
 
     /// 执行规则并返回第一个结果
     pub fn execute_rule_first(&self, rule_str: &str, content: &str) -> Option<String> {
-        self.execute_rule(rule_str, content)
-            .ok()
-            .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+        self.execute_rule(rule_str, content).ok().and_then(|mut v| {
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.remove(0))
+            }
+        })
     }
 
     /// 批量执行规则（返回所有匹配）
@@ -732,17 +762,83 @@ mod tests {
 
     #[test]
     fn test_rule_type_detection() {
-        assert!(matches!(RuleExpression::parse(".class"), Some(RuleExpression { rule_type: RuleType::Css, .. })));
-        assert!(matches!(RuleExpression::parse("/regex/"), Some(RuleExpression { rule_type: RuleType::Regex, .. })));
-        assert!(matches!(RuleExpression::parse("/regex/gi"), Some(RuleExpression { rule_type: RuleType::Regex, .. })));
-        assert!(matches!(RuleExpression::parse("$.data"), Some(RuleExpression { rule_type: RuleType::JsonPath, .. })));
-        assert!(matches!(RuleExpression::parse("$[0]"), Some(RuleExpression { rule_type: RuleType::JsonPath, .. })));
-        assert!(matches!(RuleExpression::parse("//xpath"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
-        assert!(matches!(RuleExpression::parse("/bookstore/book"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
-        assert!(matches!(RuleExpression::parse("/html/body/div[@class='foo']"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
-        assert!(matches!(RuleExpression::parse("count(//item)"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
-        assert!(matches!(RuleExpression::parse("normalize-space(//title)"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
-        assert!(matches!(RuleExpression::parse("contains(. , 'text')"), Some(RuleExpression { rule_type: RuleType::XPath, .. })));
+        assert!(matches!(
+            RuleExpression::parse(".class"),
+            Some(RuleExpression {
+                rule_type: RuleType::Css,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("/regex/"),
+            Some(RuleExpression {
+                rule_type: RuleType::Regex,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("/regex/gi"),
+            Some(RuleExpression {
+                rule_type: RuleType::Regex,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("$.data"),
+            Some(RuleExpression {
+                rule_type: RuleType::JsonPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("$[0]"),
+            Some(RuleExpression {
+                rule_type: RuleType::JsonPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("//xpath"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("/bookstore/book"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("/html/body/div[@class='foo']"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("count(//item)"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("normalize-space(//title)"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RuleExpression::parse("contains(. , 'text')"),
+            Some(RuleExpression {
+                rule_type: RuleType::XPath,
+                ..
+            })
+        ));
     }
 
     #[test]

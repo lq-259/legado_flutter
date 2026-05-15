@@ -124,7 +124,7 @@ class _ReplaceRulePageState extends ConsumerState<ReplaceRulePage> {
                       const InputDecoration(labelText: '替换文本'),
                 ),
                 DropdownButtonFormField<int>(
-                  value: scope,
+                  initialValue: scope,
                   decoration:
                       const InputDecoration(labelText: '作用范围'),
                   items: const [

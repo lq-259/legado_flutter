@@ -10,7 +10,7 @@ pub struct Chapter {
     pub title: String,
     pub content: String,
     pub index: usize,
-    pub href: Option<String>,  // EPUB 中的文件路径
+    pub href: Option<String>, // EPUB 中的文件路径
 }
 
 /// 书籍元数据（EPUB 使用）

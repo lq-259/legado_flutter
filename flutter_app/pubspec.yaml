@@ -5,7 +5,7 @@ version: 0.1.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
-  flutter: ">=3.0.0"
+  flutter: ">=3.35.0"
 
 dependencies:
   flutter:
@@ -51,7 +51,3 @@ flutter:
   uses-material-design: true
   
   # 资源文件目录
-  assets:
-    - assets/images/
-    - assets/fonts/
-    - assets/data/

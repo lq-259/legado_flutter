@@ -3,11 +3,11 @@
 //! 提供书籍相关的数据库操作。
 //! 对应原 Legado 的 Book 实体操作 (data/entities/Book.kt)
 
-use rusqlite::{Connection, Result as SqlResult, params};
+use super::models::Book;
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
 use tracing::{debug, info};
 use uuid::Uuid;
-use chrono::Utc;
-use super::models::Book;
 
 /// 书籍 DAO
 pub struct BookDao<'a> {
@@ -22,8 +22,12 @@ impl<'a> BookDao<'a> {
 
     /// 插入或更新书籍
     pub fn upsert(&self, book: &Book) -> SqlResult<()> {
-        debug!("插入/更新书籍: {} - {}", book.name, book.author.as_deref().unwrap_or(""));
-        
+        debug!(
+            "插入/更新书籍: {} - {}",
+            book.name,
+            book.author.as_deref().unwrap_or("")
+        );
+
         self.conn.execute(
             "INSERT INTO books (
                 id, source_id, source_name, name, author, cover_url, chapter_count,
@@ -76,7 +80,7 @@ impl<'a> BookDao<'a> {
                 book.updated_at,
             ],
         )?;
-        
+
         Ok(())
     }
 
@@ -89,9 +93,9 @@ impl<'a> BookDao<'a> {
                     custom_cover_path, custom_info_json, created_at, updated_at
              FROM books WHERE id = ?"
         )?;
-        
+
         let mut rows = stmt.query(params![id])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(book_from_row(row)?))
         } else {
@@ -108,7 +112,7 @@ impl<'a> BookDao<'a> {
                     custom_cover_path, custom_info_json, created_at, updated_at
              FROM books ORDER BY order_time DESC"
         )?;
-        
+
         let rows = stmt.query_map([], book_from_row)?;
         rows.collect()
     }
@@ -122,7 +126,7 @@ impl<'a> BookDao<'a> {
                     custom_cover_path, custom_info_json, created_at, updated_at
              FROM books WHERE source_id = ? ORDER BY order_time DESC"
         )?;
-        
+
         let rows = stmt.query_map(params![source_id], book_from_row)?;
         rows.collect()
     }
@@ -130,7 +134,8 @@ impl<'a> BookDao<'a> {
     /// 删除书籍
     pub fn delete(&self, id: &str) -> SqlResult<()> {
         info!("删除书籍: {}", id);
-        self.conn.execute("DELETE FROM books WHERE id = ?", params![id])?;
+        self.conn
+            .execute("DELETE FROM books WHERE id = ?", params![id])?;
         // 章节会因外键级联删除
         Ok(())
     }
@@ -146,7 +151,7 @@ impl<'a> BookDao<'a> {
              WHERE name LIKE ? OR author LIKE ?
              ORDER BY order_time DESC"
         )?;
-        
+
         let pattern = format!("%{}%", keyword);
         let rows = stmt.query_map(params![pattern, pattern], book_from_row)?;
         rows.collect()
@@ -185,7 +190,7 @@ impl<'a> BookDao<'a> {
             created_at: now,
             updated_at: now,
         };
-        
+
         self.upsert(&book)?;
         Ok(book)
     }

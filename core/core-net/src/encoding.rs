@@ -3,7 +3,7 @@
 //! 提供自动检测和转换文本编码的功能。
 //! 对应原 Legado 的中文编码处理。
 
-use encoding_rs::{Encoding, UTF_8, GB18030};
+use encoding_rs::{Encoding, GB18030, UTF_8};
 use std::fs;
 use std::path::Path;
 
@@ -14,26 +14,32 @@ pub fn detect_and_decode(bytes: &[u8]) -> (String, &'static Encoding) {
         let (text, _, _) = UTF_8.decode(&bytes[3..]);
         return (text.into_owned(), UTF_8);
     }
-    
+
     // 2. 统计检测常见中文编码
     let mut gb_count = 0;
     let mut utf8_valid = true;
-    
+
     for window in bytes.windows(3) {
         // GBK/GB18030 双字节检测
-        if window[0] >= 0x81 && window[0] <= 0xFE
-            && window.len() > 1 && window[1] >= 0x40 && window[1] <= 0xFE {
-                gb_count += 1;
-            }
-        
+        if window[0] >= 0x81
+            && window[0] <= 0xFE
+            && window.len() > 1
+            && window[1] >= 0x40
+            && window[1] <= 0xFE
+        {
+            gb_count += 1;
+        }
+
         // UTF-8 有效性检查
         if window[0] & 0x80 != 0
             && window[0] & 0xE0 == 0xC0
-                && window.len() > 1 && window[1] & 0xC0 != 0x80 {
-                    utf8_valid = false;
-                }
+            && window.len() > 1
+            && window[1] & 0xC0 != 0x80
+        {
+            utf8_valid = false;
+        }
     }
-    
+
     // 3. 根据统计结果选择编码
     let encoding = if gb_count > 10 {
         GB18030
@@ -42,7 +48,7 @@ pub fn detect_and_decode(bytes: &[u8]) -> (String, &'static Encoding) {
     } else {
         GB18030 // 默认假设中文
     };
-    
+
     let (text, _, _) = encoding.decode(bytes);
     (text.into_owned(), encoding)
 }
@@ -50,9 +56,8 @@ pub fn detect_and_decode(bytes: &[u8]) -> (String, &'static Encoding) {
 /// 从文件读取并自动检测编码
 pub fn read_file_with_encoding<P: AsRef<Path>>(path: P) -> Result<(String, String), String> {
     let path = path.as_ref();
-    let bytes = fs::read(path)
-        .map_err(|e| format!("读取文件失败: {}", e))?;
-    
+    let bytes = fs::read(path).map_err(|e| format!("读取文件失败: {}", e))?;
+
     let (text, encoding) = detect_and_decode(&bytes);
     Ok((text, encoding.name().to_string()))
 }
@@ -99,9 +104,6 @@ mod tests {
             parse_charset_from_content_type("text/html; charset=utf-8"),
             Some("utf-8".to_string())
         );
-        assert_eq!(
-            parse_charset_from_content_type("text/html"),
-            None
-        );
+        assert_eq!(parse_charset_from_content_type("text/html"), None);
     }
 }
