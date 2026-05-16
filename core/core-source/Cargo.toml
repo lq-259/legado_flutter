@@ -15,7 +15,13 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 # 脚本引擎
 rhai = { version = "1.20", features = ["sync", "serde"] }
 # HTTP 客户端（用于请求书源）
-reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls", "blocking", "socks"] }
+# ureq: simple blocking HTTP client, avoids tokio/DNS issues on Android
+# HTTP 客户端
+ureq = { version = "3", features = ["cookies", "json", "_tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls", "blocking"] }
+hickory-resolver = "0.25"
+# keep reqwest only for backward compat
+# reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls-webpki-roots", "blocking", "socks", "hickory-dns"] }
 # JavaScript 引擎（用于执行 Legado @js: / <js> / {{JS}} 规则）
 rquickjs = { version = "0.8", optional = true }
 boa_engine = { version = "0.21", optional = true }

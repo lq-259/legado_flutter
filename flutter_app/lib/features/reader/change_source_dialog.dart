@@ -50,11 +50,13 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
   String? _errorMessage;
   String? _currentLoadingSource;
   String? _selectedSourceId;
+  late String _currentSourceId;
   final List<Map<String, dynamic>> _results = [];
 
   @override
   void initState() {
     super.initState();
+    _currentSourceId = widget.currentSourceId;
     WidgetsBinding.instance.addPostFrameCallback((_) => _startSearch());
   }
 
@@ -64,6 +66,7 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
   }
 
   Future<void> _startSearch() async {
+    print("ZZZZ changeSource _startSearch: bookName=${widget.bookName}");
     setState(() {
       _isSearching = true;
       _errorMessage = null;
@@ -74,7 +77,8 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
     });
 
     try {
-      final sourcesJson = await rust_api.getEnabledSources(dbPath: widget.dbPath);
+      final sourcesJson =
+          await rust_api.getEnabledSources(dbPath: widget.dbPath);
       if (!mounted) return;
       final List<dynamic> sources = jsonDecode(sourcesJson);
 
@@ -89,12 +93,16 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
       setState(() => _totalSources = sources.length);
 
       const maxConcurrent = 8;
-      for (int batchStart = 0; batchStart < sources.length; batchStart += maxConcurrent) {
+      for (int batchStart = 0;
+          batchStart < sources.length;
+          batchStart += maxConcurrent) {
         final batchEnd = (batchStart + maxConcurrent).clamp(0, sources.length);
         final batch = sources.sublist(batchStart, batchEnd);
 
         final futures = batch.map((source) {
-          if (source == null) return Future<List<Map<String, dynamic>>>.value(<Map<String, dynamic>>[]);
+          if (source == null)
+            return Future<List<Map<String, dynamic>>>.value(
+                <Map<String, dynamic>>[]);
           return _searchSource(source as Map<String, dynamic>);
         });
 
@@ -104,10 +112,17 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
         for (final sourceResults in batchResults) {
           for (final r in sourceResults) {
             final name = (r['name'] as String? ?? '').trim();
-            if (name == widget.bookName.trim()) {
+            final _ = (r['author'] as String? ?? '').trim();
+            final bookName = widget.bookName.trim();
+            // Accept all results from the search - let user decide which source to use
+            final nameMatch = true;
+            final authorMatch = true;
+            print("ZZZZ changeSrc: name='$name' book='$bookName' accepted=true");
+            if (nameMatch && authorMatch) {
               final dedupKey = '${r['source_name']}_${r['source_id']}';
               final exists = _results.any((existing) =>
-                  '${existing['source_name']}_${existing['source_id']}' == dedupKey);
+                  '${existing['source_name']}_${existing['source_id']}' ==
+                  dedupKey);
               if (!exists) {
                 _results.add(r);
               }
@@ -121,7 +136,7 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
 
       setState(() => _isSearching = false);
       if (_results.isEmpty && mounted) {
-        setState(() => _errorMessage = '未找到完全匹配的书源');
+        setState(() => _errorMessage = '所有书源均未搜索到结果');
       }
     } catch (e) {
       if (mounted) {
@@ -133,15 +148,25 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _searchSource(Map<String, dynamic> source) async {
+  Future<List<Map<String, dynamic>>> _searchSource(
+      Map<String, dynamic> source) async {
     try {
-      setState(() => _currentLoadingSource = source['name'] as String? ?? '未知书源');
-      final onlineJson = await rust_api.searchWithSourceFromDb(
-        dbPath: widget.dbPath,
-        sourceId: source['id'] as String,
-        keyword: widget.bookName,
-      ).timeout(const Duration(seconds: 20), onTimeout: () => '[]');
+      setState(
+          () => _currentLoadingSource = source['name'] as String? ?? '未知书源');
+      final onlineJson = await rust_api
+          .searchWithSourceFromDbV2(
+            dbPath: widget.dbPath,
+            sourceId: source['id'] as String,
+            keyword: widget.bookName,
+          )
+          .timeout(const Duration(seconds: 20), onTimeout: () => '[]');
       final List<dynamic> sourceResults = jsonDecode(onlineJson);
+      // v2 may return [{"ok":false,"error":...}] for empty results
+      if (sourceResults.length == 1 &&
+          sourceResults[0] is Map &&
+          sourceResults[0]['ok'] == false) {
+        return <Map<String, dynamic>>[];
+      }
       return sourceResults.map<Map<String, dynamic>>((r) {
         final m = Map<String, dynamic>.from(r as Map);
         m['source_name'] = source['name'] ?? '未知书源';
@@ -178,10 +203,12 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
       );
       if (!mounted) return;
 
-      final chaptersJson = await rust_api.getChapterListOnline(
-        sourceJson: sourceJson,
-        bookUrl: bookUrl,
-      ).timeout(const Duration(seconds: 30));
+      final chaptersJson = await rust_api
+          .getChapterListOnline(
+            sourceJson: sourceJson,
+            bookUrl: bookUrl,
+          )
+          .timeout(const Duration(seconds: 30));
       if (!mounted) return;
 
       final List<dynamic> chaptersRaw = jsonDecode(chaptersJson);
@@ -208,10 +235,12 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
 
       Map<String, dynamic>? bookInfo;
       try {
-        final infoJson = await rust_api.getBookInfoOnline(
-          sourceJson: sourceJson,
-          bookUrl: bookUrl,
-        ).timeout(const Duration(seconds: 15));
+        final infoJson = await rust_api
+            .getBookInfoOnline(
+              sourceJson: sourceJson,
+              bookUrl: bookUrl,
+            )
+            .timeout(const Duration(seconds: 15));
         if (infoJson.isNotEmpty && infoJson != 'null') {
           final decoded = jsonDecode(infoJson);
           if (decoded is Map<String, dynamic>) {
@@ -221,6 +250,8 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
       } catch (_) {}
 
       if (!mounted) return;
+
+      setState(() => _currentSourceId = sourceId);
 
       Navigator.of(context).pop(ChangeSourceResult(
         sourceId: sourceId,
@@ -272,7 +303,9 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
               child: Row(
                 children: [
                   if (_currentLoadingSource != null) ...[
-                    const SizedBox(width: 12, height: 12,
+                    const SizedBox(
+                        width: 12,
+                        height: 12,
                         child: CircularProgressIndicator(strokeWidth: 2)),
                     const SizedBox(width: 8),
                     Expanded(
@@ -309,7 +342,8 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(
                 '找到 $_resultCount 个匹配书源',
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.disabledColor),
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.disabledColor),
               ),
             ),
           ],
@@ -332,13 +366,18 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
                         itemBuilder: (context, index) {
                           final result = _results[index];
                           final sourceId = result['source_id'] as String;
-                          final isCurrent = sourceId == widget.currentSourceId;
-                          final isLoading = _selectedSourceId == sourceId && _isLoadingToc;
+                          final isCurrent = sourceId == _currentSourceId;
+                          final isLoading =
+                              _selectedSourceId == sourceId && _isLoadingToc;
 
                           return ListTile(
                             leading: Icon(
-                              isCurrent ? Icons.check_circle : Icons.circle_outlined,
-                              color: isCurrent ? Colors.green : theme.disabledColor,
+                              isCurrent
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              color: isCurrent
+                                  ? Colors.green
+                                  : theme.disabledColor,
                             ),
                             title: Row(
                               children: [
@@ -346,26 +385,33 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
                                   child: Text(
                                     result['source_name'] as String? ?? '未知书源',
                                     style: TextStyle(
-                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                      fontWeight: isCurrent
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
                                     ),
                                   ),
                                 ),
                                 if (isCurrent)
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
                                       color: Colors.green.withAlpha(30),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: const Text('当前', style: TextStyle(fontSize: 11, color: Colors.green)),
+                                    child: const Text('当前',
+                                        style: TextStyle(
+                                            fontSize: 11, color: Colors.green)),
                                   ),
                               ],
                             ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (result['author'] != null && (result['author'] as String).isNotEmpty)
-                                  Text('作者: ${result['author']}', style: theme.textTheme.bodySmall),
+                                if (result['author'] != null &&
+                                    (result['author'] as String).isNotEmpty)
+                                  Text('作者: ${result['author']}',
+                                      style: theme.textTheme.bodySmall),
                                 Text(
                                   result['book_url'] as String? ?? '',
                                   style: theme.textTheme.bodySmall?.copyWith(
@@ -381,11 +427,13 @@ class _ChangeSourceDialogState extends State<ChangeSourceDialog> {
                                 ? const SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   )
                                 : const Icon(Icons.chevron_right),
                             enabled: !_isLoadingToc,
-                            onTap: isLoading ? null : () => _selectSource(result),
+                            onTap:
+                                isLoading ? null : () => _selectSource(result),
                           );
                         },
                       ),

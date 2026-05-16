@@ -89,6 +89,208 @@ fn wire__crate__api__add_bookmark_impl(
         },
     )
 }
+fn wire__crate__api__replace_book_chapters_preserving_content_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "replace_book_chapters_preserving_content",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_db_path = <String>::sse_decode(&mut deserializer);
+            let api_book_id = <String>::sse_decode(&mut deserializer);
+            let api_chapters_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::replace_book_chapters_preserving_content(
+                        api_db_path,
+                        api_book_id,
+                        api_chapters_json,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__search_with_source_from_db_v2_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER
+        .wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+            flutter_rust_bridge::for_generated::TaskInfo {
+                debug_name: "search_with_source_from_db_v2",
+                port: Some(port_),
+                mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            },
+            move || {
+                let message = unsafe {
+                    flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                        ptr_,
+                        rust_vec_len_,
+                        data_len_,
+                    )
+                };
+                let mut deserializer =
+                    flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+                let api_db_path = <String>::sse_decode(&mut deserializer);
+                let api_source_id = <String>::sse_decode(&mut deserializer);
+                let api_keyword = <String>::sse_decode(&mut deserializer);
+                deserializer.end();
+                move |context| async move {
+                    transform_result_sse::<_, String>(
+                        (move || async move {
+                            let output_ok = crate::api::search_with_source_from_db_v2(
+                                api_db_path,
+                                api_source_id,
+                                api_keyword,
+                            )
+                            .await?;
+                            Ok(output_ok)
+                        })()
+                        .await,
+                    )
+                }
+            },
+        )
+}
+fn wire__crate__api__search_parse_html_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER
+        .wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+            flutter_rust_bridge::for_generated::TaskInfo {
+                debug_name: "search_parse_html",
+                port: Some(port_),
+                mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            },
+            move || {
+                let message = unsafe {
+                    flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                        ptr_,
+                        rust_vec_len_,
+                        data_len_,
+                    )
+                };
+                let mut deserializer =
+                    flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+                let api_db_path = <String>::sse_decode(&mut deserializer);
+                let api_source_id = <String>::sse_decode(&mut deserializer);
+                let api_keyword = <String>::sse_decode(&mut deserializer);
+                let api_html = <String>::sse_decode(&mut deserializer);
+                deserializer.end();
+                move |context| {
+                    transform_result_sse::<_, String>((move || {
+                        let output_ok = crate::api::search_parse_html(
+                            api_db_path,
+                            api_source_id,
+                            api_keyword,
+                            api_html,
+                        )?;
+                        Ok(output_ok)
+                    })())
+                }
+            },
+        )
+}
+fn wire__crate__api__get_source_rule_search_raw_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER
+        .wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+            flutter_rust_bridge::for_generated::TaskInfo {
+                debug_name: "get_source_rule_search_raw",
+                port: Some(port_),
+                mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            },
+            move || {
+                let message = unsafe {
+                    flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                        ptr_,
+                        rust_vec_len_,
+                        data_len_,
+                    )
+                };
+                let mut deserializer =
+                    flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+                let api_db_path = <String>::sse_decode(&mut deserializer);
+                let api_source_id = <String>::sse_decode(&mut deserializer);
+                deserializer.end();
+                move |context| {
+                    transform_result_sse::<_, String>((move || {
+                        let output_ok = crate::api::get_source_rule_search_raw(
+                            api_db_path,
+                            api_source_id,
+                        )?;
+                        Ok(output_ok)
+                    })())
+                }
+            },
+        )
+}
+fn wire__crate__api__replace_book_chapters_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "replace_book_chapters",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_db_path = <String>::sse_decode(&mut deserializer);
+            let api_book_id = <String>::sse_decode(&mut deserializer);
+            let api_chapters_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::replace_book_chapters(
+                        api_db_path,
+                        api_book_id,
+                        api_chapters_json,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__batch_create_download_chapters_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1920,6 +2122,22 @@ fn pde_ffi_dispatcher_primary_impl(
         46 => wire__crate__api__save_replace_rule_impl(port, ptr, rust_vec_len, data_len),
         47 => wire__crate__api__delete_replace_rule_impl(port, ptr, rust_vec_len, data_len),
         48 => wire__crate__api__set_replace_rule_enabled_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__replace_book_chapters_preserving_content_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        50 => wire__crate__api__replace_book_chapters_impl(port, ptr, rust_vec_len, data_len),
+        51 => {
+            wire__crate__api__get_source_rule_search_raw_impl(port, ptr, rust_vec_len, data_len)
+        }
+        52 => {
+            wire__crate__api__search_with_source_from_db_v2_impl(port, ptr, rust_vec_len, data_len)
+        }
+        53 => {
+            wire__crate__api__search_parse_html_impl(port, ptr, rust_vec_len, data_len)
+        }
         _ => unreachable!(),
     }
 }

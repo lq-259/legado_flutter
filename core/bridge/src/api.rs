@@ -200,6 +200,34 @@ pub fn save_chapter(db_path: String, chapter_json: String) -> Result<(), String>
         .map_err(|e| format!("保存章节失败: {}", e))
 }
 
+/// 批量替换某本书的章节（chapters_json 为 storage::Chapter 数组 JSON），保留相同 URL 的已缓存正文
+pub fn replace_book_chapters_preserving_content(
+    db_path: String,
+    book_id: String,
+    chapters_json: String,
+) -> Result<(), String> {
+    let conn = open_db(&db_path)?;
+    let chapters: Vec<core_storage::models::Chapter> =
+        serde_json::from_str(&chapters_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
+    let dao = core_storage::chapter_dao::ChapterDao::new(&conn);
+    dao.replace_by_book_preserving_content(&book_id, &chapters)
+        .map_err(|e| format!("批量保存章节失败: {}", e))
+}
+
+/// 批量替换某本书的章节（chapters_json 为 storage::Chapter 数组 JSON），不保留旧章节正文
+pub fn replace_book_chapters(
+    db_path: String,
+    book_id: String,
+    chapters_json: String,
+) -> Result<(), String> {
+    let conn = open_db(&db_path)?;
+    let chapters: Vec<core_storage::models::Chapter> =
+        serde_json::from_str(&chapters_json).map_err(|e| format!("JSON 解析失败: {}", e))?;
+    let dao = core_storage::chapter_dao::ChapterDao::new(&conn);
+    dao.replace_by_book(&book_id, &chapters)
+        .map_err(|e| format!("批量替换章节失败: {}", e))
+}
+
 /// 删除章节
 pub fn delete_chapter(db_path: String, id: String) -> Result<(), String> {
     let conn = open_db(&db_path)?;
@@ -320,8 +348,89 @@ pub async fn get_chapter_content_online(
 }
 
 // ============================================================
+// 诊断函数：导出书源原始规则用于调试
+// ============================================================
+
+/// 获取书源的原始 rule_search JSON（用于诊断），返回 JSON 或 null
+pub fn get_source_rule_search_raw(
+    db_path: String,
+    source_id: String,
+) -> Result<String, String> {
+    let mut conn = open_db(&db_path)?;
+    let dao = core_storage::source_dao::SourceDao::new(&mut conn);
+    let source = dao
+        .get_by_id(&source_id)
+        .map_err(|e| format!("查询书源失败: {}", e))?
+        .ok_or_else(|| format!("书源不存在: {}", source_id))?;
+    serde_json::to_string(&source.rule_search).map_err(|e| format!("序列化失败: {}", e))
+}
+
+// ============================================================
 // 便捷函数：从数据库取书源后直接操作
 // ============================================================
+
+/// 从数据库加载书源并搜索（异步），返回搜索结果 JSON 数组
+/// 包装结果：正常时返回 [{"ok":true,"data":[...]}]，失败时返回 [{"ok":false,"error":"..."}]
+pub async fn search_with_source_from_db_v2(
+    db_path: String,
+    source_id: String,
+    keyword: String,
+) -> Result<String, String> {
+    let storage_source = {
+        let mut conn = open_db(&db_path)?;
+        let dao = core_storage::source_dao::SourceDao::new(&mut conn);
+        dao.get_by_id(&source_id)
+            .map_err(|e| format!("查询书源失败: {}", e))?
+            .ok_or_else(|| format!("书源不存在: {}", source_id))?
+    };
+
+    let source = match storage_to_source_book_source(&storage_source) {
+        Ok(s) => s,
+        Err(e) => {
+            let resp = serde_json::json!({"ok": false, "error": format!("转换书源失败: {}", e), "source_name": storage_source.name});
+            return serde_json::to_string(&vec![resp]).map_err(|e| format!("序列化失败: {}", e));
+        }
+    };
+
+    let parser = core_source::parser::BookSourceParser::new();
+    match parser.search(&source, &keyword).await {
+        results if results.is_empty() => {
+            let resp = serde_json::json!({"ok": false, "error": "搜索返回0结果", "source_name": source.name, "search_url": source.rule_search.as_ref().and_then(|r| r.search_url.as_ref().cloned()).unwrap_or_default()});
+            serde_json::to_string(&vec![resp])
+                .map_err(|e| format!("序列化失败: {}", e))
+        }
+        results => {
+            serde_json::to_string(&results).map_err(|e| format!("序列化失败: {}", e))
+        }
+    }
+}
+
+/// 使用预获取的 HTML 搜索（由 Dart 端 dio 提供 HTML，本端仅解析）。
+/// 返回搜索结果 JSON 数组。sync 函数，不含 HTTP 请求。
+pub fn search_parse_html(
+    db_path: String,
+    source_id: String,
+    keyword: String,
+    html: String,
+) -> Result<String, String> {
+    let storage_source = {
+        let mut conn = open_db(&db_path)?;
+        let dao = core_storage::source_dao::SourceDao::new(&mut conn);
+        dao.get_by_id(&source_id)
+            .map_err(|e| format!("查询书源失败: {}", e))?
+            .ok_or_else(|| format!("书源不存在: {}", source_id))?
+    };
+    let source = storage_to_source_book_source(&storage_source)?;
+    let parser = core_source::parser::BookSourceParser::new();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("创建 tokio runtime 失败: {}", e))?;
+    let results = rt.block_on(async { parser.search_html(&source, &keyword, &html).await });
+    drop(rt);
+    serde_json::to_string(&results).map_err(|e| format!("序列化失败: {}", e))
+}
 
 /// 从数据库加载书源并搜索（异步），返回搜索结果 JSON 数组
 pub async fn search_with_source_from_db(

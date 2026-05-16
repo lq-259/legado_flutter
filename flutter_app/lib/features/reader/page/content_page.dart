@@ -47,8 +47,8 @@ class ContentPagePainter extends CustomPainter {
     }
 
     final bgColor = Color(settings.effectiveBackgroundColor);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
-        Paint()..color = bgColor);
+    canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height), Paint()..color = bgColor);
 
     final availableWidth = size.width - settings.horizontalPadding * 2;
     double currentY = settings.verticalPadding;
@@ -57,12 +57,14 @@ class ContentPagePainter extends CustomPainter {
     final textStyle = ui.TextStyle(
       color: Color(settings.effectiveTextColor),
       fontSize: settings.fontSize,
-      fontWeight: FontWeight.values[settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
+      fontWeight: FontWeight.values[
+          settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
       letterSpacing: settings.letterSpacing,
       height: settings.lineHeight,
     );
 
-    for (final paraText in page!.paragraphTexts) {
+    for (var i = 0; i < page!.paragraphTexts.length; i++) {
+      final paraText = page!.paragraphTexts[i];
       final builder = ui.ParagraphBuilder(paragraphStyle)
         ..pushStyle(textStyle)
         ..addText(paraText);
@@ -70,7 +72,10 @@ class ContentPagePainter extends CustomPainter {
         ..layout(ui.ParagraphConstraints(width: availableWidth));
       canvas.drawParagraph(
           paragraph, Offset(settings.horizontalPadding, currentY));
-      currentY += paragraph.height + settings.paragraphSpacing;
+      currentY += paragraph.height;
+      if (i < page!.paragraphTexts.length - 1) {
+        currentY += settings.paragraphSpacing;
+      }
     }
 
     _paintFooter(canvas, size);
@@ -82,15 +87,14 @@ class ContentPagePainter extends CustomPainter {
     final linePaint = Paint()
       ..color = fgColor.withAlpha(40)
       ..strokeWidth = 0.5;
-    canvas.drawLine(
-        Offset(settings.horizontalPadding, footerY),
-        Offset(size.width - settings.horizontalPadding, footerY),
-        linePaint);
+    canvas.drawLine(Offset(settings.horizontalPadding, footerY),
+        Offset(size.width - settings.horizontalPadding, footerY), linePaint);
 
     final pageNum = (page?.pageIndex ?? -1) + 1;
     final total = totalPages;
     final percentage = total > 0 ? ((pageNum / total) * 100).round() : 0;
-    final footerText = '第 $pageNum / $total 页  $percentage%';
+    final footerText =
+        total > 0 ? '第 $pageNum/$total 页 · $percentage%' : '第 $pageNum 页';
 
     final paragraphStyle = ui.ParagraphStyle(
       textDirection: TextDirection.ltr,
@@ -105,28 +109,33 @@ class ContentPagePainter extends CustomPainter {
       ..pushStyle(textStyle)
       ..addText(footerText);
     final paragraph = builder.build()
-      ..layout(ui.ParagraphConstraints(width: size.width - settings.horizontalPadding * 2));
-    canvas.drawParagraph(paragraph,
-        Offset(settings.horizontalPadding, footerY + 8));
+      ..layout(ui.ParagraphConstraints(
+          width: size.width - settings.horizontalPadding * 2));
+    canvas.drawParagraph(
+        paragraph, Offset(settings.horizontalPadding, footerY + 8));
   }
 
   void _paintEmptyPage(Canvas canvas, Size size) {
     final bgColor = Color(settings.effectiveBackgroundColor);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
-        Paint()..color = bgColor);
+    canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height), Paint()..color = bgColor);
     final paragraphStyle = ui.ParagraphStyle(textDirection: TextDirection.ltr);
     final textStyle = ui.TextStyle(
       color: Color(settings.effectiveTextColor).withAlpha(120),
       fontSize: settings.fontSize,
-      fontWeight: FontWeight.values[settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
+      fontWeight: FontWeight.values[
+          settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
     );
     final builder = ui.ParagraphBuilder(paragraphStyle)
       ..pushStyle(textStyle)
       ..addText('（本章无内容）');
     final paragraph = builder.build()
-      ..layout(ui.ParagraphConstraints(width: size.width - settings.horizontalPadding * 2));
-    canvas.drawParagraph(paragraph,
-        Offset(settings.horizontalPadding, size.height / 2 - paragraph.height / 2));
+      ..layout(ui.ParagraphConstraints(
+          width: size.width - settings.horizontalPadding * 2));
+    canvas.drawParagraph(
+        paragraph,
+        Offset(settings.horizontalPadding,
+            size.height / 2 - paragraph.height / 2));
   }
 
   @override

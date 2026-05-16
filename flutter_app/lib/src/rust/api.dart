@@ -60,6 +60,21 @@ Future<String> createSource(
 Future<void> deleteSource({required String dbPath, required String id}) =>
     RustLib.instance.api.crateApiDeleteSource(dbPath: dbPath, id: id);
 
+/// 获取书源的原始 rule_search JSON（用于诊断），返回 JSON 或 null
+Future<String> getSourceRuleSearchRaw(
+        {required String dbPath, required String sourceId}) =>
+    RustLib.instance.api.crateApiGetSourceRuleSearchRaw(
+        dbPath: dbPath, sourceId: sourceId);
+
+/// 使用预获取的 HTML 搜索（Dart 端 Dio 取 HTML，Rust 端仅解析），返回搜索结果 JSON 数组
+Future<String> searchParseHtml(
+        {required String dbPath,
+        required String sourceId,
+        required String keyword,
+        required String html}) =>
+    RustLib.instance.api.crateApiSearchParseHtml(
+        dbPath: dbPath, sourceId: sourceId, keyword: keyword, html: html);
+
 // TODO: Regenerate bridge code to restore deleteSourcesBatch
 // /// 批量删除书源 (ids_json 为 JSON 字符串数组)
 // Future<void> deleteSourcesBatch({required String dbPath, required String idsJson}) =>
@@ -102,6 +117,22 @@ Future<void> saveChapter(
         {required String dbPath, required String chapterJson}) =>
     RustLib.instance.api
         .crateApiSaveChapter(dbPath: dbPath, chapterJson: chapterJson);
+
+/// 批量替换某本书的章节（chapters_json 为 storage::Chapter 数组 JSON），保留相同 URL 的已缓存正文
+Future<void> replaceBookChaptersPreservingContent(
+        {required String dbPath,
+        required String bookId,
+        required String chaptersJson}) =>
+    RustLib.instance.api.crateApiReplaceBookChaptersPreservingContent(
+        dbPath: dbPath, bookId: bookId, chaptersJson: chaptersJson);
+
+/// 批量替换某本书的章节（chapters_json 为 storage::Chapter 数组 JSON），不保留旧章节正文
+Future<void> replaceBookChapters(
+        {required String dbPath,
+        required String bookId,
+        required String chaptersJson}) =>
+    RustLib.instance.api.crateApiReplaceBookChapters(
+        dbPath: dbPath, bookId: bookId, chaptersJson: chaptersJson);
 
 /// 删除章节
 Future<void> deleteChapter({required String dbPath, required String id}) =>
@@ -181,6 +212,14 @@ Future<String> searchWithSourceFromDb(
         required String sourceId,
         required String keyword}) =>
     RustLib.instance.api.crateApiSearchWithSourceFromDb(
+        dbPath: dbPath, sourceId: sourceId, keyword: keyword);
+
+/// 从数据库加载书源并搜索 v2（异步），返回带错误信息的包装结果
+Future<String> searchWithSourceFromDbV2(
+        {required String dbPath,
+        required String sourceId,
+        required String keyword}) =>
+    RustLib.instance.api.crateApiSearchWithSourceFromDbV2(
         dbPath: dbPath, sourceId: sourceId, keyword: keyword);
 
 /// 从数据库加载书源并获取章节内容（异步），返回 JSON 或 null
@@ -291,8 +330,7 @@ Future<String> downloadAndSaveChapter(
 
 /// 验证书源规则（source_json 为 core_source::types::BookSource 的 JSON），返回 JSON 数组
 Future<String> validateSourceRules({required String sourceJson}) =>
-    RustLib.instance.api
-        .crateApiValidateSourceRules(sourceJson: sourceJson);
+    RustLib.instance.api.crateApiValidateSourceRules(sourceJson: sourceJson);
 
 /// 验证数据库中的书源规则，返回 JSON 数组 [{field, severity, message}]
 Future<String> validateSourceFromDb(
@@ -315,12 +353,11 @@ Future<void> saveReplaceRule(
         .crateApiSaveReplaceRule(dbPath: dbPath, ruleJson: ruleJson);
 
 /// 删除替换规则
-Future<void> deleteReplaceRule(
-        {required String dbPath, required String id}) =>
+Future<void> deleteReplaceRule({required String dbPath, required String id}) =>
     RustLib.instance.api.crateApiDeleteReplaceRule(dbPath: dbPath, id: id);
 
 /// 启用 / 禁用替换规则
 Future<void> setReplaceRuleEnabled(
         {required String dbPath, required String id, required bool enabled}) =>
-    RustLib.instance.api
-        .crateApiSetReplaceRuleEnabled(dbPath: dbPath, id: id, enabled: enabled);
+    RustLib.instance.api.crateApiSetReplaceRuleEnabled(
+        dbPath: dbPath, id: id, enabled: enabled);

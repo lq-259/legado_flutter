@@ -18,6 +18,9 @@ use super::regex_rule;
 use super::selector;
 use super::value::LegadoValue;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::LazyLock;
+
+use regex::Regex;
 use std::sync::Arc;
 
 /// 规则执行结果类型
@@ -237,7 +240,7 @@ fn execute_prefixed_rule(
     html: &str,
     context: &RuleContext,
 ) -> Result<Vec<String>, String> {
-    if let Some(expr) = rule_str.strip_prefix("@css:") {
+    if let Some(expr) = strip_css_prefix_case_insensitive(rule_str) {
         return execute_css_rule(expr, html);
     }
     if let Some(expr) = rule_str.strip_prefix("@XPath:") {
@@ -251,6 +254,19 @@ fn execute_prefixed_rule(
     }
     // 其他 @ 前缀：可能是 Default 选择器链
     execute_default_rule(rule_str, html)
+}
+
+/// Case‑insensitive @css: / @CSS: prefix
+fn strip_css_prefix_case_insensitive(rule_str: &str) -> Option<&str> {
+    if rule_str.len() < 5 {
+        return None;
+    }
+    let prefix = &rule_str[..5];
+    if prefix.eq_ignore_ascii_case("@css:") {
+        Some(&rule_str[5..])
+    } else {
+        None
+    }
 }
 
 /// 执行 CSS 规则
@@ -295,9 +311,17 @@ fn execute_css_rule(rule: &str, html: &str) -> Result<Vec<String>, String> {
 
 fn execute_single_css(selector_str: &str, html: &str) -> Result<Vec<String>, String> {
     let (selector_str, output) = split_css_output(selector_str);
-    let selector = parse_css_selector_safely(selector_str)?;
+    // Strip any legacy @css: prefix that may remain from || combined rules
+    let selector_str = strip_css_prefix_case_insensitive(selector_str).unwrap_or(selector_str);
+
+    // Pre‑process JSOUP pseudo‑selectors that scraper does not support.
+    // We strip them from the CSS string, let scraper parse the clean selector,
+    // then apply the JSOUP filters on the result set in Rust.
+    let (clean_css, jsoup_filters) = extract_jsoup_pseudos(selector_str);
+
+    let selector = parse_css_selector_safely(&clean_css)?;
     let document = scraper::Html::parse_document(html);
-    let results: Vec<String> = document
+    let mut results: Vec<String> = document
         .select(&selector)
         .map(|el| match output {
             Some("text") | Some("textNodes") => el.text().collect::<String>(),
@@ -306,7 +330,81 @@ fn execute_single_css(selector_str: &str, html: &str) -> Result<Vec<String>, Str
             Some(attr) => el.value().attr(attr).unwrap_or_default().to_string(),
         })
         .collect();
+
+    // Apply JSOUP pseudo‑selector filters in order
+    for filter in jsoup_filters {
+        apply_jsoup_filter(&mut results, &filter);
+    }
+
     Ok(results)
+}
+
+/// Extracts JSOUP pseudo‑selector fragments that scraper does not support,
+/// returning the cleaned CSS string and the list of filters to apply.
+fn extract_jsoup_pseudos(css: &str) -> (String, Vec<JsoupPseudo>) {
+    static JSOUP_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#":(contains|eq|lt|gt|matchText|matches)\(([^)]*)\)"#).unwrap()
+    });
+    let mut clean = String::with_capacity(css.len());
+    let mut filters = Vec::new();
+    let mut last_end = 0;
+    for caps in JSOUP_RE.captures_iter(css) {
+        let m = caps.get(0).unwrap();
+        clean.push_str(&css[last_end..m.start()]);
+        last_end = m.end();
+        let kind = caps.get(1).unwrap().as_str();
+        let arg = caps.get(2).unwrap().as_str();
+        filters.push(match kind {
+            "contains" => JsoupPseudo::Contains(arg.to_string()),
+            "eq" => JsoupPseudo::Eq(arg.parse().unwrap_or(0)),
+            "lt" => JsoupPseudo::Lt(arg.parse().unwrap_or(0)),
+            "gt" => JsoupPseudo::Gt(arg.parse().unwrap_or(0)),
+            "matchText" => JsoupPseudo::MatchText(arg.to_string()),
+            "matches" => JsoupPseudo::Matches(arg.to_string()),
+            _ => continue,
+        });
+    }
+    clean.push_str(&css[last_end..]);
+    (clean, filters)
+}
+
+#[derive(Debug, Clone)]
+enum JsoupPseudo {
+    Contains(String),
+    Eq(usize),
+    Lt(usize),
+    Gt(usize),
+    MatchText(String),
+    Matches(String),
+}
+
+fn apply_jsoup_filter(results: &mut Vec<String>, filter: &JsoupPseudo) {
+    match filter {
+        JsoupPseudo::Contains(text) => {
+            results.retain(|s| s.contains(text.as_str()));
+        }
+        JsoupPseudo::Eq(idx) => {
+            let val = results.get(*idx).cloned();
+            results.clear();
+            if let Some(v) = val {
+                results.push(v);
+            }
+        }
+        JsoupPseudo::Lt(idx) => {
+            if *idx < results.len() {
+                results.truncate(*idx);
+            }
+        }
+        JsoupPseudo::Gt(idx) => {
+            let skip = (*idx + 1).min(results.len());
+            *results = results[skip..].to_vec();
+        }
+        JsoupPseudo::MatchText(re) | JsoupPseudo::Matches(re) => {
+            if let Ok(regex) = Regex::new(re) {
+                results.retain(|s| regex.is_match(s));
+            }
+        }
+    }
 }
 
 fn parse_css_selector_safely(selector_str: &str) -> Result<scraper::Selector, String> {

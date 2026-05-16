@@ -71,12 +71,14 @@
 | `save_replace_rule` | 46 | `wire__crate__api__save_replace_rule_impl` |
 | `delete_replace_rule` | 47 | `wire__crate__api__delete_replace_rule_impl` |
 | `set_replace_rule_enabled` | 48 | `wire__crate__api__set_replace_rule_enabled_impl` |
+| `replace_book_chapters_preserving_content` | 49 | `wire__crate__api__replace_book_chapters_preserving_content_impl` |
+| `replace_book_chapters` | 50 | `wire__crate__api__replace_book_chapters_impl` |
 
 涉及文件：
-- `flutter_app/lib/src/rust/frb_generated.dart` — Dart abstract API + impl（funcId 42-48）
-- `core/bridge/src/frb_generated.rs` — Rust wire functions + dispatcher（funcId 42-48）
+- `flutter_app/lib/src/rust/frb_generated.dart` — Dart abstract API + impl（funcId 42-50）
+- `core/bridge/src/frb_generated.rs` — Rust wire functions + dispatcher（funcId 42-50）
 
-**⚠️ 关键约束**：后续任意 `flutter_rust_bridge_codegen generate` 运行将**覆盖**这些手工改动。重新生成前必须确认 `core/bridge/src/api.rs` 中这 7 个函数仍然存在，否则 funcId 映射会错乱。功能验证：`cargo check/test` 全部通过 + `flutter test` 全部通过。
+**⚠️ 关键约束**：后续任意 `flutter_rust_bridge_codegen generate` 运行将**覆盖**这些手工改动。重新生成前必须确认 `core/bridge/src/api.rs` 中这些函数仍然存在，否则 funcId 映射会错乱。功能验证：`cargo check/test` 全部通过 + `flutter test` 全部通过。
 
 ### Phase 0.5: 编译错误修复 — ✅ 完成
 

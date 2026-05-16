@@ -93,6 +93,25 @@ impl<'a> ChapterDao<'a> {
         }
     }
 
+    pub fn replace_by_book(&self, book_id: &str, chapters: &[Chapter]) -> SqlResult<()> {
+        self.conn.execute_batch("BEGIN")?;
+        let result = (|| -> SqlResult<()> {
+            self.conn
+                .execute("DELETE FROM chapters WHERE book_id = ?", params![book_id])?;
+            for chapter in chapters {
+                self.upsert(chapter)?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT"),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
     /// 根据 ID 获取章节
     pub fn get_by_id(&self, id: &str) -> SqlResult<Option<Chapter>> {
         let mut stmt = self.conn.prepare(
@@ -284,5 +303,19 @@ mod tests {
         assert_eq!(chapters[0].url, "/keep");
         assert_eq!(chapters[0].content.as_deref(), Some("cached"));
         assert_eq!(chapters[1].url, "/new");
+    }
+
+    #[test]
+    fn test_replace_by_book_drops_cached_content() {
+        let (_dir, conn) = setup();
+        let dao = ChapterDao::new(&conn);
+        dao.upsert(&chapter("old1", 0, "/same", Some("old cached")))
+            .unwrap();
+        dao.replace_by_book("book1", &[chapter("new1", 0, "/same", None)])
+            .unwrap();
+        let chapters = dao.get_by_book("book1").unwrap();
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].url, "/same");
+        assert_eq!(chapters[0].content, None);
     }
 }

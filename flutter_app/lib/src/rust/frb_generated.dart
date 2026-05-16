@@ -172,6 +172,16 @@ abstract class RustLibApi extends BaseApi {
 
   Future<String> crateApiPing();
 
+  Future<void> crateApiReplaceBookChapters(
+      {required String dbPath,
+      required String bookId,
+      required String chaptersJson});
+
+  Future<void> crateApiReplaceBookChaptersPreservingContent(
+      {required String dbPath,
+      required String bookId,
+      required String chaptersJson});
+
   Future<void> crateApiSaveBook(
       {required String dbPath, required String bookJson});
 
@@ -185,6 +195,12 @@ abstract class RustLibApi extends BaseApi {
       required int paragraphIndex,
       required int offset});
 
+  Future<String> crateApiSearchParseHtml(
+      {required String dbPath,
+      required String sourceId,
+      required String keyword,
+      required String html});
+
   Future<void> crateApiSaveSource(
       {required String dbPath, required String sourceJson});
 
@@ -195,6 +211,11 @@ abstract class RustLibApi extends BaseApi {
       {required String sourceJson, required String keyword});
 
   Future<String> crateApiSearchWithSourceFromDb(
+      {required String dbPath,
+      required String sourceId,
+      required String keyword});
+
+  Future<String> crateApiSearchWithSourceFromDbV2(
       {required String dbPath,
       required String sourceId,
       required String keyword});
@@ -235,6 +256,9 @@ abstract class RustLibApi extends BaseApi {
   Future<String> crateApiExportAllSources({required String dbPath});
 
   Future<String> crateApiGetReplaceRules({required String dbPath});
+
+  Future<String> crateApiGetSourceRuleSearchRaw(
+      {required String dbPath, required String sourceId});
 
   Future<void> crateApiSaveReplaceRule(
       {required String dbPath, required String ruleJson});
@@ -1047,6 +1071,66 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiReplaceBookChapters(
+      {required String dbPath,
+      required String bookId,
+      required String chaptersJson}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dbPath, serializer);
+        sse_encode_String(bookId, serializer);
+        sse_encode_String(chaptersJson, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 50, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiReplaceBookChaptersConstMeta,
+      argValues: [dbPath, bookId, chaptersJson],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiReplaceBookChaptersConstMeta =>
+      const TaskConstMeta(
+        debugName: "replace_book_chapters",
+        argNames: ["dbPath", "bookId", "chaptersJson"],
+      );
+
+  @override
+  Future<void> crateApiReplaceBookChaptersPreservingContent(
+      {required String dbPath,
+      required String bookId,
+      required String chaptersJson}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dbPath, serializer);
+        sse_encode_String(bookId, serializer);
+        sse_encode_String(chaptersJson, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 49, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiReplaceBookChaptersPreservingContentConstMeta,
+      argValues: [dbPath, bookId, chaptersJson],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiReplaceBookChaptersPreservingContentConstMeta =>
+      const TaskConstMeta(
+        debugName: "replace_book_chapters_preserving_content",
+        argNames: ["dbPath", "bookId", "chaptersJson"],
+      );
+
+  @override
   Future<void> crateApiSaveBook(
       {required String dbPath, required String bookJson}) {
     return handler.executeNormal(NormalTask(
@@ -1243,6 +1327,68 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSearchWithSourceFromDbConstMeta =>
       const TaskConstMeta(
         debugName: "search_with_source_from_db",
+        argNames: ["dbPath", "sourceId", "keyword"],
+      );
+
+  @override
+  Future<String> crateApiSearchParseHtml(
+      {required String dbPath,
+      required String sourceId,
+      required String keyword,
+      required String html}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dbPath, serializer);
+        sse_encode_String(sourceId, serializer);
+        sse_encode_String(keyword, serializer);
+        sse_encode_String(html, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 53, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiSearchParseHtmlConstMeta,
+      argValues: [dbPath, sourceId, keyword, html],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiSearchParseHtmlConstMeta =>
+      const TaskConstMeta(
+        debugName: "search_parse_html",
+        argNames: ["dbPath", "sourceId", "keyword", "html"],
+      );
+
+  @override
+  Future<String> crateApiSearchWithSourceFromDbV2(
+      {required String dbPath,
+      required String sourceId,
+      required String keyword}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dbPath, serializer);
+        sse_encode_String(sourceId, serializer);
+        sse_encode_String(keyword, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 52, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiSearchWithSourceFromDbV2ConstMeta,
+      argValues: [dbPath, sourceId, keyword],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiSearchWithSourceFromDbV2ConstMeta =>
+      const TaskConstMeta(
+        debugName: "search_with_source_from_db_v2",
         argNames: ["dbPath", "sourceId", "keyword"],
       );
 
@@ -1481,8 +1627,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     ));
   }
 
-  TaskConstMeta get kCrateApiExportAllSourcesConstMeta =>
-      const TaskConstMeta(
+  TaskConstMeta get kCrateApiExportAllSourcesConstMeta => const TaskConstMeta(
         debugName: "export_all_sources",
         argNames: ["dbPath"],
       );
@@ -1505,11 +1650,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       apiImpl: this,
     ));
   }
-
   TaskConstMeta get kCrateApiGetReplaceRulesConstMeta =>
       const TaskConstMeta(
         debugName: "get_replace_rules",
         argNames: ["dbPath"],
+      );
+
+  @override
+  Future<String> crateApiGetSourceRuleSearchRaw(
+      {required String dbPath, required String sourceId}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dbPath, serializer);
+        sse_encode_String(sourceId, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 51, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiGetSourceRuleSearchRawConstMeta,
+      argValues: [dbPath, sourceId],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiGetSourceRuleSearchRawConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_source_rule_search_raw",
+        argNames: ["dbPath", "sourceId"],
       );
 
   @override
@@ -1533,8 +1704,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     ));
   }
 
-  TaskConstMeta get kCrateApiSaveReplaceRuleConstMeta =>
-      const TaskConstMeta(
+  TaskConstMeta get kCrateApiSaveReplaceRuleConstMeta => const TaskConstMeta(
         debugName: "save_replace_rule",
         argNames: ["dbPath", "ruleJson"],
       );
@@ -1560,8 +1730,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     ));
   }
 
-  TaskConstMeta get kCrateApiDeleteReplaceRuleConstMeta =>
-      const TaskConstMeta(
+  TaskConstMeta get kCrateApiDeleteReplaceRuleConstMeta => const TaskConstMeta(
         debugName: "delete_replace_rule",
         argNames: ["dbPath", "id"],
       );

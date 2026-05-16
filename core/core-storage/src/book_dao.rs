@@ -36,6 +36,7 @@ impl<'a> BookDao<'a> {
                 custom_cover_path, custom_info_json, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                source_id = excluded.source_id,
                 source_name = excluded.source_name,
                 name = excluded.name,
                 author = excluded.author,

@@ -90,6 +90,22 @@ final dbInitializedProvider = FutureProvider<bool>((ref) async {
   }
 });
 
+// one-shot search test (runs during app init)
+final searchTestProvider = FutureProvider<String?>((ref) async {
+  await ref.watch(dbInitializedProvider.future);
+  final dbPath = await ref.watch(dbPathProvider.future);
+  try {
+    // test basic HTTP connectivity first
+    final basic = await rust_api.searchWithSourceFromDbV2(
+        dbPath: dbPath, sourceId: "61315941-0cda-4e83-8134-86db0dc9f469", keyword: "主角");
+    print("SEARCH_TEST: $basic");
+    return "done";
+  } catch (e) {
+    print("SEARCH_TEST FAIL: $e");
+    return "err";
+  }
+});
+
 final allBooksProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   await ref.watch(dbInitializedProvider.future);
   final dbPath = await ref.watch(dbPathProvider.future);

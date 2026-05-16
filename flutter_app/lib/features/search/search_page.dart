@@ -69,7 +69,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       final hashInput = stableSource.isNotEmpty
           ? stableSource
           : '${result['name'] ?? 'unknown'}|$now';
-      bookId = base64Url.encode(sha256.convert(utf8.encode(hashInput)).bytes).replaceAll('=', '');
+      bookId = base64Url
+          .encode(sha256.convert(utf8.encode(hashInput)).bytes)
+          .replaceAll('=', '');
     } else {
       final rawId = result['id'] as String?;
       if (rawId != null && rawId.trim().isNotEmpty) {
@@ -79,7 +81,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             .where((o) => o != null && o.toString().isNotEmpty)
             .join('|');
         final hashInput = fallback.isNotEmpty ? fallback : 'unknown|$now';
-        bookId = base64Url.encode(sha256.convert(utf8.encode(hashInput)).bytes).replaceAll('=', '');
+        bookId = base64Url
+            .encode(sha256.convert(utf8.encode(hashInput)).bytes)
+            .replaceAll('=', '');
       }
     }
     final bookData = <String, dynamic>{
@@ -94,6 +98,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       'intro': result['intro'],
       'kind': result['kind'],
       'book_url': result['book_url'],
+      'toc_url': result['toc_url'] ?? result['book_url'],
       'last_check_time': result['last_check_time'],
       'last_check_count': result['last_check_count'] ?? 0,
       'total_word_count': result['total_word_count'] ?? 0,
@@ -115,11 +120,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       savedBook = true;
       final coverUrl = result['cover_url'] as String?;
       if (coverUrl != null && coverUrl.isNotEmpty) {
-        unawaited(_downloadAndCacheCover(coverUrl, dbPath).then((localPath) async {
+        unawaited(
+            _downloadAndCacheCover(coverUrl, dbPath).then((localPath) async {
           if (localPath != null) {
             bookData['custom_cover_path'] = localPath;
             try {
-              await rust_api.saveBook(dbPath: dbPath, bookJson: jsonEncode(bookData));
+              await rust_api.saveBook(
+                  dbPath: dbPath, bookJson: jsonEncode(bookData));
             } catch (_) {}
           }
         }));
@@ -133,7 +140,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return;
     }
 
-    if (bookUrl != null && bookUrl.isNotEmpty && sourceId != null && sourceId.isNotEmpty) {
+    if (bookUrl != null &&
+        bookUrl.isNotEmpty &&
+        sourceId != null &&
+        sourceId.isNotEmpty) {
+      // Fetch chapters online as fallback
       try {
         final dbPath = await ref.read(dbPathProvider.future);
         if (!mounted) return;
@@ -148,13 +159,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
         if (!mounted) return;
         final List<dynamic> chapters = jsonDecode(chaptersJson);
+        final chapterRecords = <Map<String, dynamic>>[];
         for (var i = 0; i < chapters.length; i++) {
           final ch = chapters[i] as Map<String, dynamic>;
           final chapterKey = '${bookData['id']}|$i|${ch['url'] ?? ''}';
           final chapterId = base64Url
               .encode(sha256.convert(utf8.encode(chapterKey)).bytes)
               .replaceAll('=', '');
-          final chapterData = {
+          chapterRecords.add({
             'id': chapterId,
             'book_id': bookData['id'],
             'index_num': i,
@@ -167,19 +179,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             'end': 0,
             'created_at': now,
             'updated_at': now,
-          };
-          await rust_api.saveChapter(
-            dbPath: dbPath,
-            chapterJson: jsonEncode(chapterData),
-          );
-          savedChapterCount++;
+          });
         }
-        if (savedChapterCount > 0) {
+        if (chapterRecords.isNotEmpty) {
+          await rust_api.replaceBookChaptersPreservingContent(
+            dbPath: dbPath,
+            bookId: bookId,
+            chaptersJson: jsonEncode(chapterRecords),
+          );
+          savedChapterCount = chapterRecords.length;
           bookData['chapter_count'] = savedChapterCount;
           if (chapters.isNotEmpty) {
-            bookData['latest_chapter_title'] = (chapters.last as Map<String, dynamic>)['title'];
+            bookData['latest_chapter_title'] =
+                (chapters.last as Map<String, dynamic>)['title'];
           }
-          await rust_api.saveBook(dbPath: dbPath, bookJson: jsonEncode(bookData));
+          await rust_api.saveBook(
+              dbPath: dbPath, bookJson: jsonEncode(bookData));
         }
       } catch (e) {
         debugPrint('拉取章节失败: $e');
@@ -203,7 +218,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     } else {
       snackMsg = '已添加: ${bookData['name']}';
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(snackMsg)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(snackMsg)));
   }
 
   Future<String?> _downloadAndCacheCover(String coverUrl, String dbPath) async {
@@ -214,7 +230,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         coversDir.createSync(recursive: true);
       }
       final hashBytes = md5.convert(utf8.encode(coverUrl)).bytes;
-      final hash = hashBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      final hash =
+          hashBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
       final ext = coverUrl.split('.').last.split('?').first;
       final safeExt = ext.length <= 5 ? ext : 'jpg';
       final filePath = '${coversDir.path}/$hash.$safeExt';
@@ -281,7 +298,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         if (!mounted) return;
         final dbPath = await ref.read(dbPathProvider.future);
         if (!mounted) return;
-        final offlineJson = await rust_api.searchBooksOffline(dbPath: dbPath, keyword: keyword);
+        final offlineJson =
+            await rust_api.searchBooksOffline(dbPath: dbPath, keyword: keyword);
         final List<dynamic> offlineList = jsonDecode(offlineJson);
         if (!mounted) return;
         _results.value = offlineList.cast<Map<String, dynamic>>();
@@ -300,22 +318,59 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Future<List<Map<String, dynamic>>> _searchWithSource(
-    String dbPath, dynamic source, String keyword) async {
+      String dbPath, dynamic source, String keyword) async {
     try {
-      final onlineJson = await rust_api.searchWithSourceFromDb(
+      final sourceId = source['id'] as String;
+      final sourceName = source['name'] ?? '未知书源';
+
+      // Get source config with search URL
+      final srcJson =
+          await rust_api.getSourceForDownload(dbPath: dbPath, sourceId: sourceId);
+      final src = jsonDecode(srcJson);
+      final searchUrl = src['rule_search']?['search_url'] as String?;
+      if (searchUrl == null || searchUrl.isEmpty) {
+        return <Map<String, dynamic>>[];
+      }
+
+      // Resolve URL template
+      final encodedKeyword = Uri.encodeComponent(keyword);
+      var resolvedUrl = searchUrl
+          .replaceAll('{{key}}', encodedKeyword)
+          .replaceAll('{{keyword}}', encodedKeyword)
+          .replaceAll('{{page}}', '1');
+
+      if (!resolvedUrl.startsWith('http')) {
+        final baseUrl = src['url'] as String? ?? '';
+        resolvedUrl = Uri.parse(baseUrl).resolve(resolvedUrl).toString();
+      }
+
+      // Fetch HTML via Dio
+      final response = await Dio().get(resolvedUrl,
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+          ));
+      final html = response.data as String? ?? '';
+      if (html.isEmpty) return <Map<String, dynamic>>[];
+
+      // Parse HTML with Rust parser
+      final resultJson = await rust_api.searchParseHtml(
         dbPath: dbPath,
-        sourceId: source['id'] as String,
+        sourceId: sourceId,
         keyword: keyword,
+        html: html,
       );
-      final List<dynamic> sourceResults = jsonDecode(onlineJson);
+      final List<dynamic> sourceResults = jsonDecode(resultJson);
       return sourceResults.map<Map<String, dynamic>>((r) {
         final m = Map<String, dynamic>.from(r as Map);
-        m['source_name'] = source['name'] ?? '未知书源';
-        m['source_id'] = source['id'];
+        m['source_name'] = sourceName;
+        m['source_id'] = sourceId;
         return m;
       }).toList();
     } catch (e) {
-      debugPrint('书源 ${source['name']} 搜索失败: $e');
       return <Map<String, dynamic>>[];
     }
   }
@@ -338,12 +393,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   children: [
                     _buildOnlineToggle(),
                     if (_loading)
-                      const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                      const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2))
                     else
-                      IconButton(icon: const Icon(Icons.send), onPressed: _doSearch),
+                      IconButton(
+                          icon: const Icon(Icons.send), onPressed: _doSearch),
                   ],
                 ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onSubmitted: (_) => _doSearch(),
             ),
@@ -367,14 +427,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     final kind = book['kind'] as String?;
                     final intro = book['intro'] as String?;
                     final sourceName = book['source_name'] as String?;
+                    final chapterCount = book['chapter_count'] as int?;
                     final latestChapter = book['last_chapter'] as String? ??
                         book['latest_chapter_title'] as String?;
 
                     final subtitleParts = <String>[
                       if (author.isNotEmpty) author,
                       if (kind != null && kind.isNotEmpty) kind,
-                      if (latestChapter != null && latestChapter.isNotEmpty) latestChapter,
-                      if (sourceName != null && sourceName.isNotEmpty) '来源: $sourceName',
+                      if (chapterCount != null && chapterCount > 0)
+                        '目录 $chapterCount 章',
+                      if (latestChapter != null && latestChapter.isNotEmpty)
+                        latestChapter,
+                      if (sourceName != null && sourceName.isNotEmpty)
+                        '来源: $sourceName',
                     ];
 
                     return Card(
@@ -397,7 +462,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                       name,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
                                             fontWeight: FontWeight.w600,
                                           ),
                                     ),
@@ -407,7 +475,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                         subtitleParts.join(' · '),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
                                               color: Colors.grey[600],
                                             ),
                                       ),
@@ -418,7 +489,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                         intro,
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
                                               color: Colors.grey[500],
                                               fontSize: 11,
                                             ),
@@ -557,7 +631,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           width: w,
           height: h,
           color: Colors.grey.shade200,
-          child: Icon(Icons.broken_image, size: 24, color: Colors.grey.shade400),
+          child:
+              Icon(Icons.broken_image, size: 24, color: Colors.grey.shade400),
         ),
       ),
     );
@@ -611,9 +686,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         children: [
                           Text(
                             book['name'] as String? ?? '未知',
-                            style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                            style:
+                                Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                           ),
                           const SizedBox(height: 4),
                           if (book['author'] != null)
@@ -627,9 +703,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                 style: Theme.of(ctx).textTheme.bodySmall),
                           if (book['source_name'] != null)
                             Text('来源: ${book['source_name']}',
-                                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                                      color: Colors.grey,
-                                    )),
+                                style:
+                                    Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                                          color: Colors.grey,
+                                        )),
                         ],
                       ),
                     ),

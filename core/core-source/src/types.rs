@@ -67,32 +67,32 @@ fn now_timestamp() -> i64 {
 /// 搜索规则
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchRule {
-    #[serde(default)]
+    #[serde(default, alias = "searchUrl")]
     pub search_url: Option<String>, // 搜索URL模板（含{{keyword}}占位符）
-    #[serde(default)]
+    #[serde(default, alias = "bookList")]
     pub book_list: Option<String>, // 搜索结果列表的选择器
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub author: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "bookUrl")]
     pub book_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "coverUrl")]
     pub cover_url: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "lastChapter")]
     pub last_chapter: Option<String>,
     #[serde(default)]
     pub intro: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "wordCount")]
     pub word_count: Option<String>,
 }
 
 /// 书籍详情规则
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BookInfoRule {
-    #[serde(default)]
+    #[serde(default, alias = "bookInfoInit")]
     pub book_info_init: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
@@ -100,34 +100,34 @@ pub struct BookInfoRule {
     pub author: Option<String>,
     #[serde(default)]
     pub intro: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "coverUrl")]
     pub cover_url: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "wordCount")]
     pub word_count: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "lastChapter")]
     pub last_chapter: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "tocUrl")]
     pub toc_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "canReName")]
     pub can_rename: Option<String>,
 }
 
 /// 目录规则
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TocRule {
-    #[serde(default)]
+    #[serde(default, alias = "chapterList")]
     pub chapter_list: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "chapterName")]
     pub chapter_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "chapterUrl")]
     pub chapter_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "nextTocUrl")]
     pub next_toc_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "isVip")]
     pub is_vip: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "updateTime")]
     pub update_time: Option<String>,
 }
 
@@ -136,11 +136,11 @@ pub struct TocRule {
 pub struct ContentRule {
     #[serde(default)]
     pub content: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "nextContentUrl")]
     pub next_content_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "webJs")]
     pub web_js: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "sourceRegex")]
     pub source_regex: Option<String>,
 }
 

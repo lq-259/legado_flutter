@@ -154,6 +154,17 @@ impl RuleExpression {
                 css_skip,
                 replace_rules,
             })
+        } else if let Some(expr) =
+            trimmed.strip_prefix("@css:").or_else(|| trimmed.strip_prefix("@CSS:"))
+        {
+            Some(Self {
+                rule_type: RuleType::Css,
+                expression: expr.trim().to_string(),
+                extract_type,
+                css_index,
+                css_skip,
+                replace_rules,
+            })
         } else if trimmed.contains('{') && trimmed.contains('}') && trimmed.starts_with('$') {
             // 可能是 JSONPath 或包含占位符的字符串
             Some(Self {

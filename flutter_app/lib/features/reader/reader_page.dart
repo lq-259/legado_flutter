@@ -182,7 +182,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       if (book != null && mounted) {
         _sourceName = book['source_name'] as String? ?? '';
         _sourceUrl = book['source_url'] as String? ?? '';
-        _sourceId = book['source_id'] as String? ?? '';
+        if (_sourceId.isEmpty) {
+          _sourceId = book['source_id'] as String? ?? '';
+        }
         if (_cachedChapters != null &&
             _currentIndex < _cachedChapters!.length) {
           _chapterUrl = _cachedChapters![_currentIndex]['url'] as String? ?? '';
@@ -213,10 +215,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
           }
         }
       } catch (_) {}
-      return content;
+      return _cleanHtml(content);
     }
     final book = await ref.read(bookByIdProvider(widget.bookId).future);
     final dbPath = await ref.read(dbPathProvider.future);
+    // Always use book's source_id when state is empty (fresh open)
+    if (_sourceId.isEmpty && book != null) {
+      _sourceId = book['source_id'] as String? ?? '';
+      _sourceName = book['source_name'] as String? ?? '';
+      _sourceUrl = book['source_url'] as String? ?? '';
+    }
     final sourceId = _sourceId.isNotEmpty
         ? _sourceId
         : (book?['source_id'] as String? ?? '');
@@ -277,7 +285,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       }
     } catch (_) {}
 
-    return content;
+    return _cleanHtml(content);
+  }
+
+  String _cleanHtml(String text) {
+    return text
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll(RegExp(r'<[^>]+>'), '');
   }
 
   Future<void> _openChapter(
@@ -776,7 +795,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         dbPath: dbPath,
         bookId: widget.bookId,
       );
-      if (json.isEmpty || json == 'null') return;
+      if (json.isEmpty || json == 'null') {
+        await _openChapter(widget.chapterIndex, chapters);
+        return;
+      }
       final progress = jsonDecode(json);
       if (progress is! Map<String, dynamic>) return;
       final savedIndex = progress['chapter_index'] as int? ?? 0;
@@ -803,7 +825,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     try {
       final dbPath = await ref.read(dbPathProvider.future);
       final book = await ref.read(bookByIdProvider(widget.bookId).future);
-      final sourceId = book?['source_id'] as String? ?? '';
+      final sourceId = _sourceId.isNotEmpty
+          ? _sourceId
+          : (book?['source_id'] as String? ?? '');
       final chapterUrl = chapters[nextIndex]['url'] as String? ?? '';
       if (sourceId.isEmpty || chapterUrl.isEmpty) return;
       final json = await rust_api.getChapterContentWithSourceFromDb(
@@ -1504,24 +1528,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final dbPath = await ref.read(dbPathProvider.future);
     if (!mounted) return;
 
-    try {
-      final oldChaptersJson = await rust_api.getBookChapters(
-        dbPath: dbPath,
-        bookId: widget.bookId,
-      );
-      final List<dynamic> oldChapters = jsonDecode(oldChaptersJson);
-      for (final ch in oldChapters) {
-        final chMap = ch as Map<String, dynamic>;
-        final chapterId = chMap['id'] as String?;
-        if (chapterId != null) {
-          await rust_api.deleteChapter(dbPath: dbPath, id: chapterId);
-        }
-      }
-    } catch (_) {}
-
     final chapters = result.chapters;
     int savedCount = 0;
     final List<Map<String, dynamic>> cachedChaptersList = [];
+    final List<Map<String, dynamic>> chapterRecords = [];
     for (var i = 0; i < chapters.length; i++) {
       final ch = chapters[i];
       final chapterKey = '${widget.bookId}|$i|${ch['url'] ?? ''}';
@@ -1542,10 +1552,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         'created_at': now,
         'updated_at': now,
       };
-      await rust_api.saveChapter(
-        dbPath: dbPath,
-        chapterJson: jsonEncode(chapterData),
-      );
+      chapterRecords.add(chapterData);
       savedCount++;
       cachedChaptersList.add({
         'id': chapterId,
@@ -1554,6 +1561,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         'content': null,
       });
     }
+
+    await rust_api.replaceBookChapters(
+      dbPath: dbPath,
+      bookId: widget.bookId,
+      chaptersJson: jsonEncode(chapterRecords),
+    );
 
     int targetIndex = savedIndex;
     if (targetIndex < 0 || targetIndex >= chapters.length) {
@@ -1588,8 +1601,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       _isLoadingContent = true;
       _currentIndex = targetIndex;
       _cachedChapters = cachedChaptersList;
+      _sourceId = result.sourceId;
       _sourceName = result.sourceName;
       _sourceUrl = result.bookUrl;
+      _chapterUrl = cachedChaptersList.isNotEmpty
+          ? (cachedChaptersList[targetIndex]['url'] as String? ?? '')
+          : '';
+      _loadedChapters = [];
+      _cachedContinuousItems = null;
     });
 
     try {
@@ -1650,6 +1669,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       );
 
       final title = chapters[targetIndex]['title'] as String? ?? '';
+      content = _cleanHtml(content);
       setState(() {
         _chapterContent = content;
         _isLoadingContent = false;
@@ -1914,14 +1934,36 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         color: fg.withValues(alpha: 0.5),
         fontSize: 12,
         decoration: TextDecoration.none);
+    final chapterIndex = _settings.pageMode == ReaderPageMode.continuousScroll
+        ? _visibleChapterIndex
+        : _currentIndex;
+    final safeChapterIndex =
+        chapters.isEmpty ? 0 : chapterIndex.clamp(0, chapters.length - 1);
+    final chapterProgress = chapters.isEmpty
+        ? 0
+        : (((safeChapterIndex + 1) / chapters.length) * 100)
+            .clamp(0, 100)
+            .round();
+    final pageIndex = (_pageViewController?.currentPageIndex ?? 0) + 1;
+    final pageTotal = _pageViewController?.totalPagesInChapter ?? 0;
+    final progressText = _settings.pageMode == ReaderPageMode.page
+        ? '第 $pageIndex/$pageTotal 页 · 第 ${safeChapterIndex + 1}/${chapters.length} 章'
+        : '第 ${safeChapterIndex + 1}/${chapters.length} 章 · $chapterProgress%';
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, left: 16, right: 16),
       child: Row(
         children: [
-          if (settings.showProgress)
-            Text('${_visibleChapterIndex + 1}/${chapters.length}',
-                style: infoStyle),
-          const Spacer(),
+          if (settings.showProgress) ...[
+            Expanded(
+              child: Text(
+                progressText,
+                style: infoStyle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ] else
+            const Spacer(),
           if (settings.showClock)
             ValueListenableBuilder<DateTime>(
               valueListenable: _nowNotifier,

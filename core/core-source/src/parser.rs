@@ -149,6 +149,25 @@ impl BookSourceParser {
     /// 搜索书籍
     /// 对应原 Legado 的 searchBook 流程
     pub async fn search(&self, source: &BookSource, keyword: &str) -> Vec<SearchResult> {
+        self.search_impl(source, keyword, None).await
+    }
+
+    /// 使用预获取的 HTML 搜索（跳过 HTTP 请求），用于 Android 等 DNS 受限环境
+    pub async fn search_html(
+        &self,
+        source: &BookSource,
+        keyword: &str,
+        html: &str,
+    ) -> Vec<SearchResult> {
+        self.search_impl(source, keyword, Some(html)).await
+    }
+
+    async fn search_impl(
+        &self,
+        source: &BookSource,
+        keyword: &str,
+        preloaded_html: Option<&str>,
+    ) -> Vec<SearchResult> {
         info!("搜索书籍: {} (书源: {})", keyword, source.name);
 
         // 1. 构建搜索 URL
@@ -166,23 +185,49 @@ impl BookSourceParser {
             }
         };
 
-        // 2. 发起 HTTP 请求
+        // 2. 构建请求 URL（用于结果中的 book_url）
         let request_url = resolve_source_url(
             source,
             &crate::legado::url::parse_legado_url(&search_url),
             keyword,
             1,
         );
-        let html = match self.fetch_url(source, &search_url, keyword, 1).await {
-            Ok(text) => text,
-            Err(e) => {
-                warn!("搜索请求失败: {}", e);
-                return vec![];
-            }
-        };
-        let request_context = crate::legado::RuleContext::for_search(&search_url, keyword, 1);
-        let request_context =
-            rule_context_with_source_headers(rule_context_with_src(request_context, &html), source);
+
+        // 3. 发起 HTTP 请求（如果未提供预加载 HTML）
+        let html: String;
+        let mut request_context;
+        if let Some(pre) = preloaded_html {
+            html = pre.to_string();
+            request_context = rule_context_with_source_headers(
+                rule_context_with_src(
+                    crate::legado::RuleContext::for_search(&search_url, keyword, 1),
+                    &html,
+                ),
+                source,
+            );
+        } else {
+            html = match self.fetch_url(source, &search_url, keyword, 1).await {
+                Ok(text) => text,
+                Err(e) => {
+                    warn!("搜索请求失败: {}", e);
+                    return vec![SearchResult {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: format!("[ERR] {}", if e.len() > 200 { &e[..200] } else { &e }),
+                        author: String::new(),
+                        cover_url: None,
+                        intro: Some(format!("url={}", search_url)),
+                        book_url: String::new(),
+                        source_id: source.id.clone(),
+                        source_name: source.name.clone(),
+                    }];
+                }
+            };
+            request_context = crate::legado::RuleContext::for_search(&search_url, keyword, 1);
+            request_context = rule_context_with_source_headers(
+                rule_context_with_src(request_context, &html),
+                source,
+            );
+        }
 
         // 3. 使用规则解析搜索结果
         let rules = source.rule_search.as_ref().unwrap();

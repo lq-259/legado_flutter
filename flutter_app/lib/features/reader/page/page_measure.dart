@@ -29,8 +29,7 @@ class PageMeasure {
 
   static const double _footerHeight = 36.0;
 
-  double get _contentWidth =>
-      pageSize.width - settings.horizontalPadding * 2;
+  double get _contentWidth => pageSize.width - settings.horizontalPadding * 2;
 
   double get _contentHeight =>
       pageSize.height - settings.verticalPadding * 2 - _footerHeight;
@@ -46,7 +45,8 @@ class PageMeasure {
     return ui.TextStyle(
       color: Color(settings.effectiveTextColor),
       fontSize: settings.fontSize,
-      fontWeight: FontWeight.values[settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
+      fontWeight: FontWeight.values[
+          settings.fontWeightIndex.clamp(0, FontWeight.values.length - 1)],
       letterSpacing: settings.letterSpacing,
       height: settings.lineHeight,
     );
@@ -56,7 +56,8 @@ class PageMeasure {
     final builder = ui.ParagraphBuilder(_paragraphStyle)
       ..pushStyle(_textStyle)
       ..addText(text);
-    return builder.build()..layout(ui.ParagraphConstraints(width: _contentWidth));
+    return builder.build()
+      ..layout(ui.ParagraphConstraints(width: _contentWidth));
   }
 
   PageMeasureResult measureChapter(
@@ -84,11 +85,13 @@ class PageMeasure {
           : paraText;
 
       final paragraph = _buildParagraph(displayText);
-      final paraHeight = paragraph.height + settings.paragraphSpacing;
+      final paraHeight = paragraph.height;
+      final spacing =
+          currentPageParagraphs.isEmpty ? 0.0 : settings.paragraphSpacing;
 
-      if (usedHeight + paraHeight <= _contentHeight) {
+      if (usedHeight + spacing + paraHeight <= _contentHeight) {
         currentPageParagraphs.add(displayText);
-        usedHeight += paraHeight;
+        usedHeight += spacing + paraHeight;
         if (isPending) {
           pendingText = null;
           i++;
@@ -97,7 +100,7 @@ class PageMeasure {
         }
       } else {
         final lines = paragraph.computeLineMetrics();
-        final remaining = _contentHeight - usedHeight;
+        final remaining = _contentHeight - usedHeight - spacing;
 
         int fittingLines = 0;
         double fitHeight = 0;
@@ -111,14 +114,20 @@ class PageMeasure {
         }
 
         if (fittingLines > 0) {
-          int endOffset = _charOffsetForLine(paragraph, lines, fittingLines, displayText.length);
+          int endOffset = _charOffsetForLine(
+              paragraph, lines, fittingLines, displayText.length);
           currentPageParagraphs.add(displayText.substring(0, endOffset));
         }
 
         if (currentPageParagraphs.isNotEmpty) {
           _finalizePage(
-            pages, pageIndices, currentPageParagraphs,
-            chapterIndex, currentPageIndex, startParagraph, i,
+            pages,
+            pageIndices,
+            currentPageParagraphs,
+            chapterIndex,
+            currentPageIndex,
+            startParagraph,
+            i,
             startCharOffset,
           );
           currentPageIndex++;
@@ -127,10 +136,12 @@ class PageMeasure {
         usedHeight = 0;
 
         if (fittingLines < lines.length) {
-          int startOffset = _charOffsetForLine(paragraph, lines, fittingLines, displayText.length);
+          int startOffset = _charOffsetForLine(
+              paragraph, lines, fittingLines, displayText.length);
           pendingText = displayText.substring(startOffset);
           startParagraph = i;
-          startCharOffset = paragraphs.take(i).fold(0, (sum, p) => sum + p.length);
+          startCharOffset =
+              paragraphs.take(i).fold(0, (sum, p) => sum + p.length);
         } else {
           pendingText = null;
           i++;
@@ -144,8 +155,13 @@ class PageMeasure {
 
     if (currentPageParagraphs.isNotEmpty) {
       _finalizePage(
-        pages, pageIndices, currentPageParagraphs,
-        chapterIndex, currentPageIndex, startParagraph, paragraphs.length - 1,
+        pages,
+        pageIndices,
+        currentPageParagraphs,
+        chapterIndex,
+        currentPageIndex,
+        startParagraph,
+        paragraphs.length - 1,
         startCharOffset,
       );
       currentPageIndex++;
@@ -168,7 +184,8 @@ class PageMeasure {
 
     final chapterPageIndices = <int, List<int>>{};
     chapterPageIndices[chapterIndex] = pageIndices;
-    return PageMeasureResult(pages: pages, chapterPageIndices: chapterPageIndices);
+    return PageMeasureResult(
+        pages: pages, chapterPageIndices: chapterPageIndices);
   }
 
   void _finalizePage(
@@ -197,7 +214,8 @@ class PageMeasure {
     pageIndices.add(pageIndex);
   }
 
-  int _charOffsetForLine(ui.Paragraph paragraph, List<ui.LineMetrics> lines, int lineIndex, int textLength) {
+  int _charOffsetForLine(ui.Paragraph paragraph, List<ui.LineMetrics> lines,
+      int lineIndex, int textLength) {
     if (lineIndex <= 0) return 0;
     if (lineIndex >= lines.length) return textLength;
     final lm = lines[lineIndex];
@@ -206,5 +224,4 @@ class PageMeasure {
     );
     return pos.offset.clamp(0, textLength);
   }
-
 }
