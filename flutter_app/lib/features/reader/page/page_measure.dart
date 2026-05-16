@@ -32,7 +32,7 @@ class PageMeasure {
   double get _contentWidth => pageSize.width - settings.horizontalPadding * 2;
 
   double get _contentHeight =>
-      pageSize.height - settings.verticalPadding * 2 - _footerHeight;
+      pageSize.height - settings.verticalPadding * 2;
 
   ui.ParagraphStyle get _paragraphStyle {
     return ui.ParagraphStyle(

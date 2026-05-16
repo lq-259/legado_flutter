@@ -78,41 +78,6 @@ class ContentPagePainter extends CustomPainter {
       }
     }
 
-    _paintFooter(canvas, size);
-  }
-
-  void _paintFooter(Canvas canvas, Size size) {
-    final footerY = size.height - 36;
-    final fgColor = Color(settings.effectiveTextColor).withAlpha(140);
-    final linePaint = Paint()
-      ..color = fgColor.withAlpha(40)
-      ..strokeWidth = 0.5;
-    canvas.drawLine(Offset(settings.horizontalPadding, footerY),
-        Offset(size.width - settings.horizontalPadding, footerY), linePaint);
-
-    final pageNum = (page?.pageIndex ?? -1) + 1;
-    final total = totalPages;
-    final percentage = total > 0 ? ((pageNum / total) * 100).round() : 0;
-    final footerText =
-        total > 0 ? '第 $pageNum/$total 页 · $percentage%' : '第 $pageNum 页';
-
-    final paragraphStyle = ui.ParagraphStyle(
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '…',
-    );
-    final textStyle = ui.TextStyle(
-      color: fgColor,
-      fontSize: 12,
-    );
-    final builder = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(textStyle)
-      ..addText(footerText);
-    final paragraph = builder.build()
-      ..layout(ui.ParagraphConstraints(
-          width: size.width - settings.horizontalPadding * 2));
-    canvas.drawParagraph(
-        paragraph, Offset(settings.horizontalPadding, footerY + 8));
   }
 
   void _paintEmptyPage(Canvas canvas, Size size) {
